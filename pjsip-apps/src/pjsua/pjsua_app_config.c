@@ -1384,7 +1384,7 @@ static pj_status_t parse_args(int argc, char *argv[],
 	    PJ_LOG(1,(THIS_FILE,
 		      "Argument \"%s\" is not valid. Use --help to see help",
 		      argv[pj_optind-1]));
-	    return -1;
+	    //return -1;// ADDED BY TERMI
 	}
     }
 

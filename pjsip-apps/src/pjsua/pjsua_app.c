@@ -18,6 +18,11 @@
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA 
  */
 #include "pjsua_app.h"
+// ADDED BY TERMI START
+#include <easywsclient.h>
+// pjproject/Release/easywsclient.lib
+//#include <string>
+// ADDED BY TERMI END
 
 #define THIS_FILE	"pjsua_app.c"
 
@@ -59,6 +64,13 @@ static pj_status_t app_destroy();
 static pjsua_app_cfg_t app_cfg;
 pj_str_t		    uri_arg;
 pj_bool_t		    app_running	= PJ_FALSE;
+
+
+// ADDED BY TERMI START
+//std::string webSocketUri;
+//std::string prefix;
+//HMODULE module;
+// ADDED BY TERMI END
 
 /*****************************************************************************
  * Configuration manipulation
@@ -194,6 +206,13 @@ static void on_call_state(pjsua_call_id call_id, pjsip_event *e)
 	if (app_config.auto_play_hangup)
 	    pjsua_player_set_pos(app_config.wav_id, 0);
 
+	// ADDED BY TERMI START
+	easywsclient_sendMessage("json::{\"type\":\"call_disconnected\",\"id\":%d,\"acc_id\":%d,\"state\":%d,\"state_text\":\"%.*s\",\"reason\":%d,\"reason_message\":\"<|[%.*s]|>\",\"connect_duration\":%d,\"total_duration\":%d,\"Call-ID\":\"%.*s\"}",
+		call_id, (int)call_info.acc_id, (int)call_info.state, (int)call_info.state_text.slen, call_info.state_text.ptr,
+		(int)call_info.last_status, (int)call_info.last_status_text.slen, call_info.last_status_text.ptr,
+		(int)PJ_TIME_VAL_MSEC(call_info.connect_duration), (int)PJ_TIME_VAL_MSEC(call_info.total_duration),
+		(int)call_info.call_id.slen, call_info.call_id.ptr);
+	// ADDED BY TERMI END
 
 	PJ_LOG(3,(THIS_FILE, "Call %d is DISCONNECTED [reason=%d (%.*s)]", 
 		  call_id,
@@ -230,7 +249,7 @@ static void on_call_state(pjsua_call_id call_id, pjsip_event *e)
 	}
 
 	if (call_info.state == PJSIP_INV_STATE_EARLY) {
-	    int code;
+	    int code = 0;
 	    pj_str_t reason;
 	    pjsip_msg *msg;
 
@@ -254,6 +273,12 @@ static void on_call_state(pjsua_call_id call_id, pjsip_event *e)
 		ringback_start(call_id);
 	    }
 
+		// ADDED BY TERMI START
+		easywsclient_sendMessage("json::{\"type\":\"call_state_changed\",\"id\":%d,\"acc_id\":%d,\"state\":%d,\"state_text\":\"<|[%.*s]|>\",\"media_status\":%d,\"code\":%d,\"reason\":\"%.*s\",\"connect_duration\":%d,\"total_duration\":%d}",
+			call_id, (int)call_info.acc_id, (int)call_info.state, (int)call_info.state_text.slen, call_info.state_text.ptr, call_info.media_status, code, (int)reason.slen, reason.ptr,
+		(int)PJ_TIME_VAL_MSEC(call_info.connect_duration), (int)PJ_TIME_VAL_MSEC(call_info.total_duration));
+		// ADDED BY TERMI END
+
 	    PJ_LOG(3,(THIS_FILE, "Call %d state changed to %.*s (%d %.*s)", 
 		      call_id, (int)call_info.state_text.slen, 
                       call_info.state_text.ptr, code, 
@@ -263,6 +288,30 @@ static void on_call_state(pjsua_call_id call_id, pjsip_event *e)
 		      call_id,
 		      (int)call_info.state_text.slen,
 		      call_info.state_text.ptr));
+
+		// ADDED BY TERMI START
+		{
+		int code = 0;
+	    pj_str_t reason = pj_str("");
+	    pjsip_msg *msg;
+
+	    /* This can only occur because of TX or RX message */
+	    if (e->type == PJSIP_EVENT_TSX_STATE) {
+			if (e->body.tsx_state.type == PJSIP_EVENT_RX_MSG) {
+			msg = e->body.tsx_state.src.rdata->msg_info.msg;
+			} else {
+			msg = e->body.tsx_state.src.tdata->msg;
+			}
+
+			code = msg->line.status.code;
+			reason = msg->line.status.reason;
+		}
+
+		easywsclient_sendMessage("json::{\"type\":\"call_state_changed\",\"id\":%d,\"acc_id\":%d,\"state\":%d,\"state_text\":\"<|[%.*s]|>\",\"media_status\":%d,\"code\":%d,\"reason\":\"%.*s\",\"connect_duration\":%d,\"total_duration\":%d}",
+			call_id, (int)call_info.acc_id, (int)call_info.state, (int)call_info.state_text.slen, call_info.state_text.ptr, call_info.media_status, code, (int)reason.slen, reason.ptr,
+		(int)PJ_TIME_VAL_MSEC(call_info.connect_duration), (int)PJ_TIME_VAL_MSEC(call_info.total_duration));
+		}
+		// ADDED BY TERMI END
 	}
 
 	if (current_call==PJSUA_INVALID_ID)
@@ -270,6 +319,131 @@ static void on_call_state(pjsua_call_id call_id, pjsip_event *e)
 
     }
 }
+
+// ADDED BY TERMI START
+/*static pj_str_t * _simple_replace_quote(const pj_str_t * input_str) {
+	// Самый простой способ "экранировать" кавычки ", чтобы JSON был валидным
+	// TODO:: Сделать нормальное экранирование
+	pj_str_t output_str;
+
+	pj_strcpy(&output_str, input_str);
+
+	for (int i= 0 ; i < output_str.slen ; i++) {
+		char c = output_str[i];
+
+		if (c == '"') {
+			output_str[i] = '\'';
+		}
+	}
+
+    return &output_str;
+}
+*/
+static void on_outgoing_call_start1(pjsua_acc_id acc_id, pjsua_call_id call_id, const pj_str_t * dest_uri, const pj_str_t * from_uri, const pj_str_t * CallID) {
+	easywsclient_sendMessage("json::{\"type\":\"outgoing_call_start\",\"id\":%d,\"acc_id\":%d,\"dest_uri\":\"<|[%.*s]|>\",\"from_uri\":\"<|[%.*s]|>\",\"Call-ID\":\"%.*s\"}",
+		call_id, acc_id, (int)dest_uri->slen, dest_uri->ptr, (int)from_uri->slen, from_uri->ptr, (int)CallID->slen, CallID->ptr);
+
+}
+static void on_outgoing_call1(pjsua_acc_id acc_id, pjsua_call_id call_id, const pj_str_t * dest_uri, const pj_str_t * from_uri) {
+    pjsua_call_info call_info;
+
+    pjsua_call_get_info(call_id, &call_info);
+
+	easywsclient_sendMessage("json::{\"type\":\"outgoing_call\",\"id\":%d,\"acc_id\":%d,\"dest_uri\":\"<|[%.*s]|>\",\"from_uri\":\"<|[%.*s]|>\",\"to_string\":\"<|[%.*s]|>\",\"from_string\":\"<|[%.*s]|>\",\"media_status\":%d,\"Call-ID\":\"%.*s\"}",
+		call_id, acc_id, (int)dest_uri->slen, dest_uri->ptr, (int)from_uri->slen, from_uri->ptr, (int)call_info.remote_info.slen, call_info.remote_info.ptr, (int)call_info.local_info.slen, call_info.local_info.ptr,
+		call_info.media_status,
+		(int)call_info.call_id.slen, call_info.call_id.ptr);
+
+}
+static void on_outgoing_call_error1(pjsua_acc_id acc_id, pjsua_call_id call_id, const pj_str_t * dest_uri, const pj_str_t * from_uri, int errorCode, pj_status_t status) {
+	//PJ_LOG(3,(THIS_FILE, " -- 1 call_id=%d acc_id=%d dest_uri->slen=%d from_uri->slen=%d errorCode=%d status=%d", call_id, acc_id, (int)dest_uri->slen, (int)from_uri->slen, errorCode, (int)status));
+	//PJ_LOG(3,(THIS_FILE, " -- 2 (%.*s) (%.*s)", (int)dest_uri->slen, dest_uri->ptr, (int)from_uri->slen, from_uri->ptr));
+    easywsclient_sendMessage("json::{\"type\":\"outgoing_call_error\",\"id\":%d,\"acc_id\":%d,\"dest_uri\":\"<|[%.*s]|>\",\"from_uri\":\"<|[%.*s]|>\",\"errorCode\":%d,\"status\":%d}",
+		call_id, acc_id, (int)dest_uri->slen, dest_uri->ptr, (int)from_uri->slen, from_uri->ptr, errorCode, (int)status);
+}
+
+static void on_call_hold1(pjsua_acc_id acc_id, pjsua_call_id call_id) {
+	pjsua_call_info call_info;
+
+    pjsua_call_get_info(call_id, &call_info);
+
+	easywsclient_sendMessage("json::{\"type\":\"call_hold\",\"id\":%d,\"acc_id\":%d,\"media_status\":%d}", call_id, acc_id, call_info.media_status);
+}
+
+static void on_call_hold_error1(pjsua_acc_id acc_id, pjsua_call_id call_id, int errorCode, pj_status_t status) {
+	easywsclient_sendMessage("json::{\"type\":\"call_hold_error\",\"id\":%d,\"acc_id\":%d,\"errorCode\":%d,\"status\":%d}", call_id, acc_id, errorCode, (int)status);
+}
+
+static void on_call_unhold1(pjsua_acc_id acc_id, pjsua_call_id call_id) {
+	pjsua_call_info call_info;
+
+    pjsua_call_get_info(call_id, &call_info);
+
+	easywsclient_sendMessage("json::{\"type\":\"call_unhold\",\"id\":%d,\"acc_id\":%d,\"media_status\":%d}", call_id, acc_id, call_info.media_status);
+}
+
+static void on_call_unhold_error1(pjsua_acc_id acc_id, pjsua_call_id call_id, int errorCode, pj_status_t status) {
+	easywsclient_sendMessage("json::{\"type\":\"call_unhold_error\",\"id\":%d,\"acc_id\":%d,\"errorCode\":%d,\"status\":%d}", call_id, acc_id, errorCode, (int)status);
+}
+
+static void on_call_transfer1(pjsua_acc_id acc_id, pjsua_call_id call_id, const pj_str_t *dest, pjsua_call_id dest_call_id) {
+	int with_replaces = dest_call_id != -1 ? 1 : 0;
+
+	easywsclient_sendMessage("json::{\"type\":\"call_transfer\",\"id\":%d,\"acc_id\":%d,\"with_replaces\":%d,\"dest_call_id\":%d,\"dest\":\"<|[%.*s]|>\"}"
+		, call_id, acc_id, with_replaces, dest_call_id, (int)dest->slen, dest->ptr);
+}
+
+static void on_call_transfer_error1(pjsua_acc_id acc_id, pjsua_call_id call_id, const pj_str_t *dest, pjsua_call_id dest_call_id, int errorCode, pj_status_t status) {
+	int with_replaces = dest_call_id != -1 ? 1 : 0;
+
+	easywsclient_sendMessage("json::{\"type\":\"call_transfer_error\",\"id\":%d,\"acc_id\":%d,\"with_replaces\":%d,\"dest_call_id\":%d,\"dest\":\"<|[%.*s]|>\",\"errorCode\":%d,\"status\":%d}"
+		, call_id, acc_id, with_replaces, dest_call_id, (int)dest->slen, dest->ptr, errorCode, (int)status);
+}
+
+static void on_call_hangup_all1() {
+	easywsclient_sendMessage("json::{\"type\":\"call_hangup_all\"}");
+}
+
+static void on_call_hangup1(pjsua_acc_id acc_id, pjsua_call_id call_id, unsigned code, const pj_str_t *reason) {
+	easywsclient_sendMessage("json::{\"type\":\"call_hangup\",\"id\":%d,\"acc_id\":%d,\"code\":%d,\"reason\":\"<|[%.*s]|>\"}"
+		, call_id, acc_id, code, (int)reason->slen, reason->ptr);
+}
+
+static void on_call_hangup_error1(pjsua_acc_id acc_id, pjsua_call_id call_id, unsigned code, const pj_str_t *reason, int errorCode, pj_status_t status) {
+	easywsclient_sendMessage("json::{\"type\":\"call_hangup\",\"id\":%d,\"acc_id\":%d,\"code\":%d,\"reason\":\"<|[%.*s]|>\",\"errorCode\":%d,\"status\":%d}"
+		, call_id, acc_id, code, (int)reason->slen, reason->ptr, errorCode, (int)status);
+}
+
+static void on_state_change1(pjsua_state old_state, pjsua_state new_state) {
+	easywsclient_sendMessage("json::{\"type\":\"state_changes\",\"old_state\":%i,\"new_state\":%i}", old_state, new_state);
+}
+
+static void on_acc_status1(pjsua_acc_id acc_id, pj_bool_t is_online) {
+	easywsclient_sendMessage("json::{\"type\":\"acc_status\",\"acc_id\":%d,\"is_online\":%d}", acc_id, is_online);
+}
+
+static void on_acc_status21(pjsua_acc_id acc_id, pj_bool_t is_online, const pjrpid_element *pr) {
+	easywsclient_sendMessage("json::{\"type\":\"acc_status\",\"acc_id\":%d,\"is_online\":%d,\"rpid_type\":%d,\"rpid_id\":\"<|[%.*s]|>\",\"rpid_activity\":%d,\"rpid_note\":\"<|[%.*s]|>\"}"
+		, acc_id, is_online, (int)pr->type, (int)pr->id.slen, pr->id.ptr, (int)pr->activity, (int)pr->note.slen, pr->note.ptr);
+}
+
+
+static void on_reg_state21(pjsua_acc_id acc_id, pjsua_reg_info* reg_info) {
+    int status = (int)reg_info->cbparam->status;
+    int code = (int)reg_info->cbparam->code;
+    int expiration = reg_info->cbparam->expiration;
+	// TODO:: pj_str_t from_uri = reg_info->regc->from_uri;
+	// TODO:: pj_str_t str_srv_url = reg_info->regc->str_srv_url;
+
+	easywsclient_sendMessage("json::{\"type\":\"reg_state2\",\"acc_id\":%d,\"renew\":%d,\"status\":%d,\"code\":%d,\"expiration\":%d,\"reason\":\"<|[%.*s]|>\"}",
+		acc_id, reg_info->renew, status, code, expiration, (int)reg_info->cbparam->reason.slen, reg_info->cbparam->reason.ptr);
+}
+
+static void on_regc_contact_updated1(pjsua_acc_id acc_id, const pj_str_t* reg_contact) {
+	easywsclient_sendMessage("json::{\"type\":\"regc_contact_updated\",\"acc\":%d,\"reg_contact\":\"<|[%.*s]|>\"}", acc_id, (int)reg_contact->slen, reg_contact->ptr);
+}
+
+// ADDED BY TERMI END
 
 /**
  * Handler when there is incoming call.
@@ -319,6 +493,35 @@ static void on_incoming_call(pjsua_acc_id acc_id, pjsua_call_id call_id,
 	}
 #endif
 
+	// ADDED BY TERMI START
+	//fflush(stdout);
+
+	// Предыдущая (устаревшая) версия получения входящего звонка
+	/*easywsclient_sendMessage("Incoming call:: id: #%d, with acc: #%d, to: %.*s, from: %.*s, Call-ID: %.*s",
+		call_info.id, acc_id, (int)call_info.local_info.slen, call_info.local_info.ptr, (int)call_info.remote_info.slen, call_info.remote_info.ptr, (int)call_info.call_id.slen, call_info.call_id.ptr
+		);*/
+	// Новая версия получения входящего звонка
+	// "escape::" for end-using '\n' escaping
+	easywsclient_sendMessage4000("json::escape::{\"type\":\"incoming_call_message\",\"id\":%d,\"acc_id\":%d,\"rdata\":\"<|[%s]|>\",\"message\":\"<|[%.*s]|>\",\"Call-ID\":\"%.*s\"}",
+		call_info.id, acc_id,
+		pjsip_rx_data_get_info(rdata),
+		(int)rdata->msg_info.len, rdata->msg_info.msg_buf,
+		(int)call_info.call_id.slen, call_info.call_id.ptr
+		);
+	easywsclient_sendMessage("json::{\"type\":\"incoming_call\",\"id\":%d,\"acc_id\":%d,\"to_string\":\"<|[%.*s]|>\",\"from_string\":\"<|[%.*s]|>\",\"Call-ID\":\"%.*s\""
+		",\"call_info\":{\"rem_aud_cnt\":%d,\"rem_vid_cnt\":%d}"
+		",\"notif_st\":\"%s\""
+		"}",
+		call_info.id, acc_id, (int)call_info.local_info.slen, call_info.local_info.ptr, (int)call_info.remote_info.slen, call_info.remote_info.ptr, (int)call_info.call_id.slen, call_info.call_id.ptr,
+		call_info.rem_aud_cnt, call_info.rem_vid_cnt,
+		notif_st
+		);
+		/*
+	PJ_LOG(4,(THIS_FILE, "Incoming call:: id: #%d, with acc: #%d, to: %.*s, from: %.*s, Call-ID: %.*s",
+		call_info.id, acc_id, (int)call_info.local_info.slen, call_info.local_info.ptr, (int)call_info.remote_info.slen, call_info.remote_info.ptr, (int)call_info.call_id.slen, call_info.call_id.ptr));
+	fflush(stdout);*/
+	// ADDED BY TERMI END
+
 	PJ_LOG(3,(THIS_FILE,
 		  "Incoming call for account %d!\n"
 		  "Media count: %d audio & %d video\n"
@@ -338,6 +541,95 @@ static void on_incoming_call(pjsua_acc_id acc_id, pjsua_call_id call_id,
 		  (app_config.use_cli?"g":"h")));
     }
 }
+
+/*
+ * Handler when a transaction within a call has changed state.
+ * /
+static void on_call_tsx_state(pjsua_call_id call_id,
+			      pjsip_transaction *tsx,
+			      pjsip_event *e)
+{
+    const pjsip_method info_method =
+    {
+	PJSIP_OTHER_METHOD,
+	{ "INFO", 4 }
+    };
+
+    if (pjsip_method_cmp(&tsx->method, &info_method)==0) {
+	/ *
+	 * Handle INFO method.
+	 * /
+	const pj_str_t STR_APPLICATION = { "application", 11};
+	const pj_str_t STR_DTMF_RELAY  = { "dtmf-relay", 10 };
+	pjsip_msg_body *body = NULL;
+	pj_bool_t dtmf_info = PJ_FALSE;
+
+	if (tsx->role == PJSIP_ROLE_UAC) {
+	    if (e->body.tsx_state.type == PJSIP_EVENT_TX_MSG)
+		body = e->body.tsx_state.src.tdata->msg->body;
+	    else
+		body = e->body.tsx_state.tsx->last_tx->msg->body;
+	} else {
+	    if (e->body.tsx_state.type == PJSIP_EVENT_RX_MSG)
+		body = e->body.tsx_state.src.rdata->msg_info.msg->body;
+	}
+
+	/ * Check DTMF content in the INFO message * /
+	if (body && body->len &&
+	    pj_stricmp(&body->content_type.type, &STR_APPLICATION)==0 &&
+	    pj_stricmp(&body->content_type.subtype, &STR_DTMF_RELAY)==0)
+	{
+	    dtmf_info = PJ_TRUE;
+	}
+
+	if (dtmf_info && tsx->role == PJSIP_ROLE_UAC &&
+	    (tsx->state == PJSIP_TSX_STATE_COMPLETED ||
+	       (tsx->state == PJSIP_TSX_STATE_TERMINATED &&
+	        e->body.tsx_state.prev_state != PJSIP_TSX_STATE_COMPLETED)))
+	{
+	    / * Status of outgoing INFO request * /
+	    if (tsx->status_code >= 200 && tsx->status_code < 300) {
+		PJ_LOG(4,(THIS_FILE,
+			  "Call %d: DTMF sent successfully with INFO",
+			  call_id));
+	    } else if (tsx->status_code >= 300) {
+		PJ_LOG(4,(THIS_FILE,
+			  "Call %d: Failed to send DTMF with INFO: %d/%.*s",
+			  call_id,
+		          tsx->status_code,
+			  (int)tsx->status_text.slen,
+			  tsx->status_text.ptr));
+	    }
+	} else if (dtmf_info && tsx->role == PJSIP_ROLE_UAS &&
+		   tsx->state == PJSIP_TSX_STATE_TRYING)
+	{
+	    / * Answer incoming INFO with 200/OK * /
+	    pjsip_rx_data *rdata;
+	    pjsip_tx_data *tdata;
+	    pj_status_t status;
+
+	    rdata = e->body.tsx_state.src.rdata;
+
+	    if (rdata->msg_info.msg->body) {
+		status = pjsip_endpt_create_response(tsx->endpt, rdata,
+						     200, NULL, &tdata);
+		if (status == PJ_SUCCESS)
+		    status = pjsip_tsx_send_msg(tsx, tdata);
+
+		PJ_LOG(3,(THIS_FILE, "Call %d: incoming INFO:\n%.*s",
+			  call_id,
+			  (int)rdata->msg_info.msg->body->len,
+			  rdata->msg_info.msg->body->data));
+	    } else {
+		status = pjsip_endpt_create_response(tsx->endpt, rdata,
+						     400, NULL, &tdata);
+		if (status == PJ_SUCCESS)
+		    status = pjsip_tsx_send_msg(tsx, tdata);
+	    }
+	}
+    }
+}
+*/
 
 /* General processing for media state. "mi" is the media index */
 static void on_call_generic_media_state(pjsua_call_info *ci, unsigned mi,
@@ -462,6 +754,11 @@ static void on_call_audio_state(pjsua_call_info *ci, unsigned mi,
 	    }
 	}
     }
+
+	// ADDED BY TERMI START
+	easywsclient_sendMessage("json::{\"type\":\"call_audio_state\",\"id\":%d,\"acc_id\":%d,\"media_type\":%d,\"media_status\":%d}",
+		ci->id, ci->acc_id, (int)ci->media[mi].type, (int)ci->media[mi].status);
+	// ADDED BY TERMI END
 }
 
 /* Process video media state. "mi" is the media index. */
@@ -722,6 +1019,14 @@ static void on_call_transfer_status(pjsua_call_id call_id,
 	      call_id, status_code,
 	      (int)status_text->slen, status_text->ptr,
 	      (final ? "[final]" : "")));
+
+	// ADDED BY TERMI START
+	{
+		int successfully = (status_code/100 == 2) ? 1 : 0;
+		easywsclient_sendMessage("json::{\"type\":\"call_transfer_status\",\"id\":%d,\"acc_id\":%d,\"final\":%d,\"successfully\":%d,\"status_code\":%d,\"status_text\":\"%.*s\"}"
+			, call_id, -1, (int)final, successfully, status_code, (int)status_text->slen, status_text->ptr);
+	}
+	// ADDED BY TERMI END
 
     if (status_code/100 == 2) {
 	PJ_LOG(3,(THIS_FILE, 
@@ -1231,6 +1536,7 @@ static pj_status_t app_init()
     pjsua_transport_id transport_id = -1;
     pjsua_transport_config tcp_cfg;
     unsigned i;
+	int __index = 0;// ADDED BY TERMI
     pj_pool_t *tmp_pool;
     pj_status_t status;
 
@@ -1251,6 +1557,28 @@ static pj_status_t app_init()
 	app_config.cli_cfg.telnet_cfg.on_started = cli_on_started;
     }
 
+	// ADDED BY TERMI START
+	for (  ; __index < app_cfg.argc ; __index++ ) {
+		/*size_t lenpre = strlen(app_cfg.argv[__index]),
+           lenstr = strlen("--ipc-socket-uri=");
+		int result = lenstr < lenpre ? -1 : strncmp(app_cfg.argv[__index], "--ipc-socket-uri=", lenpre);
+
+		PJ_LOG(1,(THIS_FILE, "%s %d %d %d", app_cfg.argv[__index], result, lenpre, lenstr));*/
+
+		if ( easywsclient_startsWith("--ipc-socket-uri=", app_cfg.argv[__index]) == 0 ) {
+			PJ_LOG(1,(THIS_FILE, app_cfg.argv[__index]));
+			easywsclient_setUrl(app_cfg.argv[__index]);
+		}
+		else if ( easywsclient_startsWith("--ipc-prefix=", app_cfg.argv[__index]) == 0 ) {
+			PJ_LOG(1,(THIS_FILE, app_cfg.argv[__index]));
+			easywsclient_setPrefix(app_cfg.argv[__index]);
+		}
+	}
+
+	__index = easywsclient_createServer();
+
+	// ADDED BY TERMI END
+
     /** Parse args **/
     status = load_config(app_cfg.argc, app_cfg.argv, &uri_arg);
     if (status != PJ_SUCCESS) {
@@ -1262,6 +1590,26 @@ static pj_status_t app_init()
     app_config.cfg.cb.on_call_state = &on_call_state;
     app_config.cfg.cb.on_call_media_state = &on_call_media_state;
     app_config.cfg.cb.on_incoming_call = &on_incoming_call;
+	// ADDED BY TERMI START
+	app_config.cfg.cb.on_outgoing_call_start1 = &on_outgoing_call_start1;
+	app_config.cfg.cb.on_outgoing_call1 = &on_outgoing_call1;
+	app_config.cfg.cb.on_outgoing_call_error1 = &on_outgoing_call_error1;
+	app_config.cfg.cb.on_state_change1 = &on_state_change1;
+	app_config.cfg.cb.on_call_hangup_all1 = &on_call_hangup_all1;
+	app_config.cfg.cb.on_call_hangup1 = &on_call_hangup1;
+	app_config.cfg.cb.on_call_hangup_error1 = &on_call_hangup_error1;
+	app_config.cfg.cb.on_acc_status1 = &on_acc_status1;
+	app_config.cfg.cb.on_acc_status21 = &on_acc_status21;
+	app_config.cfg.cb.on_reg_state2 = &on_reg_state21;
+	app_config.cfg.cb.on_regc_contact_updated1 = &on_regc_contact_updated1;
+	app_config.cfg.cb.on_call_hold1 = &on_call_hold1;
+	app_config.cfg.cb.on_call_hold_error1 = &on_call_hold_error1;
+	app_config.cfg.cb.on_call_unhold1 = &on_call_unhold1;
+	app_config.cfg.cb.on_call_unhold_error1 = &on_call_unhold_error1;
+	app_config.cfg.cb.on_call_transfer1 = &on_call_transfer1;
+	app_config.cfg.cb.on_call_transfer_error1 = &on_call_transfer_error1;
+//    app_config.cfg.cb.on_call_tsx_state = &on_call_tsx_state;
+	// ADDED BY TERMI END
     app_config.cfg.cb.on_dtmf_digit2 = &call_on_dtmf_callback2;
     app_config.cfg.cb.on_call_redirected = &call_on_redirected;
     app_config.cfg.cb.on_reg_state = &on_reg_state;

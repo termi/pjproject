@@ -2060,6 +2060,12 @@ void pjsua_set_state(pjsua_state new_state)
     };
     pjsua_state old_state = pjsua_var.state;
 
+	// ADDED BY TERMI START
+	if (pjsua_var.ua_cfg.cb.on_state_change1) {
+		(*pjsua_var.ua_cfg.cb.on_state_change1)(old_state, new_state);
+    }
+	// ADDED BY TERMI END
+
     pjsua_var.state = new_state;
     PJ_LOG(4,(THIS_FILE, "PJSUA state changed: %s --> %s",
 	      state_name[old_state], state_name[new_state]));

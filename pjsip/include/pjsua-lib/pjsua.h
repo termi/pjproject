@@ -912,6 +912,25 @@ typedef struct pjsua_callback
     void (*on_incoming_call)(pjsua_acc_id acc_id, pjsua_call_id call_id,
 			     pjsip_rx_data *rdata);
 
+	// ADDED BY TERMI START
+	void (*on_outgoing_call_start1)(pjsua_acc_id acc_id, pjsua_call_id call_id, const pj_str_t * dest_uri, const pj_str_t * from_uri, const pj_str_t * CallID);
+	void (*on_outgoing_call1)(pjsua_acc_id acc_id, pjsua_call_id call_id, const pj_str_t * dest_uri, const pj_str_t * from_uri);
+	void (*on_outgoing_call_error1)(pjsua_acc_id acc_id, pjsua_call_id call_id, const pj_str_t * dest_uri, const pj_str_t * from_uri, int errorCode, pj_status_t status);
+	void (*on_state_change1)(pjsua_state old_state, pjsua_state new_state);
+	void (*on_acc_status1)(pjsua_acc_id acc_id, pj_bool_t is_online);
+	void (*on_acc_status21)(pjsua_acc_id acc_id, pj_bool_t is_online, const pjrpid_element *pr);
+	void (*on_regc_contact_updated1)(pjsua_acc_id acc_id, const pj_str_t* reg_contact);
+	void (*on_call_hold1)(pjsua_acc_id acc_id, pjsua_call_id call_id);
+	void (*on_call_hold_error1)(pjsua_acc_id acc_id, pjsua_call_id call_id, int errorCode, pj_status_t status);
+	void (*on_call_unhold1)(pjsua_acc_id acc_id, pjsua_call_id call_id);
+	void (*on_call_unhold_error1)(pjsua_acc_id acc_id, pjsua_call_id call_id, int errorCode, pj_status_t status);
+	void (*on_call_transfer1)(pjsua_acc_id acc_id, pjsua_call_id call_id, const pj_str_t *dest, pjsua_call_id dest_call_id);
+	void (*on_call_transfer_error1)(pjsua_acc_id acc_id, pjsua_call_id call_id, const pj_str_t *dest, pjsua_call_id dest_call_id, int errorCode, pj_status_t status);
+	void (*on_call_hangup_all1)();
+	void (*on_call_hangup1)(pjsua_acc_id acc_id, pjsua_call_id call_id, unsigned code, const pj_str_t *reason);
+	void (*on_call_hangup_error1)(pjsua_acc_id acc_id, pjsua_call_id call_id, unsigned code, const pj_str_t *reason, int errorCode, pj_status_t status);
+	// ADDED BY TERMI END
+
     /**
      * This is a general notification callback which is called whenever
      * a transaction within the call has changed state. Application can

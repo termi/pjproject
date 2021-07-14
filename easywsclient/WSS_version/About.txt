@@ -1,0 +1,2 @@
+version from https://github.com/englercj/gamesparks-cpp-unreal/blob/master/GameSparksSample/Plugins/GameSparks/Source/GameSparksBaseSDK/src/easywsclient/easywsclient.cpp
+with WSS support

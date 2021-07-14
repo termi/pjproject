@@ -500,7 +500,10 @@ PJ_INLINE(pjsip_cfg_t*) pjsip_cfg(void)
  * Default is 1300 bytes.
  */
 #ifndef PJSIP_UDP_SIZE_THRESHOLD
+/*// ADDED BY TERMI: commented
 #   define PJSIP_UDP_SIZE_THRESHOLD	1300
+*/
+#   define PJSIP_UDP_SIZE_THRESHOLD	900// ADDED BY TERMI
 #endif
 
 

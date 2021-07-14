@@ -1496,6 +1496,12 @@ PJ_DEF(pj_status_t) pjsua_acc_set_online_status( pjsua_acc_id acc_id,
     pj_bzero(&pjsua_var.acc[acc_id].rpid, sizeof(pjrpid_element));
     pjsua_pres_update_acc(acc_id, PJ_FALSE);
 
+	// ADDED BY TERMI START
+	if (pjsua_var.ua_cfg.cb.on_acc_status1) {
+	(*pjsua_var.ua_cfg.cb.on_acc_status1)(acc_id, is_online);
+    }
+	// ADDED BY TERMI END
+
     pj_log_pop_indent();
     return PJ_SUCCESS;
 }
@@ -1520,6 +1526,12 @@ PJ_DEF(pj_status_t) pjsua_acc_set_online_status2( pjsua_acc_id acc_id,
     pjsua_var.acc[acc_id].online_status = is_online;
     pjrpid_element_dup(pjsua_var.acc[acc_id].pool, &pjsua_var.acc[acc_id].rpid, pr);
     PJSUA_UNLOCK();
+
+	// ADDED BY TERMI START
+	if (pjsua_var.ua_cfg.cb.on_acc_status21) {
+	(*pjsua_var.ua_cfg.cb.on_acc_status21)(acc_id, is_online, pr);
+    }
+	// ADDED BY TERMI END
 
     pjsua_pres_update_acc(acc_id, PJ_TRUE);
     pj_log_pop_indent();
@@ -1583,6 +1595,12 @@ done:
 	    pj_strcat(&reg_contact, &acc->cfg.reg_contact_params);
 	    
 	    acc->reg_contact = reg_contact;
+
+		// ADDED BY TERMI START
+		if (pjsua_var.ua_cfg.cb.on_regc_contact_updated1) {
+		(*pjsua_var.ua_cfg.cb.on_regc_contact_updated1)(acc->index, &acc->reg_contact);
+		}
+		// ADDED BY TERMI END
 
 	    PJ_LOG(4,(THIS_FILE,
 		      "Contact for acc %d updated: %.*s",

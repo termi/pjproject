@@ -823,11 +823,18 @@ PJ_DEF(pj_status_t) pjsua_call_make_call(pjsua_acc_id acc_id,
 {
     pj_pool_t *tmp_pool = NULL;
     pjsip_dialog *dlg = NULL;
+    /*// ADDED BY TERMI: original
     pjsua_acc *acc;
     pjsua_call *call;
     int call_id = -1;
     pj_str_t contact;
+    */
+    pjsua_acc *acc = NULL;// ADDED BY TERMI
+    pjsua_call *call = NULL;// ADDED BY TERMI
+    int call_id = -1;
+    pj_str_t contact = pj_str("");// ADDED BY TERMI
     pj_status_t status;
+	int errorCode = 0;// ADDED BY TERMI
 
     /* Check that account is valid */
     PJ_ASSERT_RETURN(acc_id>=0 && acc_id<(int)PJ_ARRAY_SIZE(pjsua_var.acc),
@@ -848,6 +855,7 @@ PJ_DEF(pj_status_t) pjsua_call_make_call(pjsua_acc_id acc_id,
 	pjsua_perror(THIS_FILE, "Unable to make call because account "
 		     "is not valid", PJ_EINVALIDOP);
 	status = PJ_EINVALIDOP;
+	errorCode = 2;// ADDED BY TERMI
 	goto on_error;
     }
 
@@ -857,6 +865,7 @@ PJ_DEF(pj_status_t) pjsua_call_make_call(pjsua_acc_id acc_id,
     if (call_id == PJSUA_INVALID_ID) {
 	pjsua_perror(THIS_FILE, "Error making call", PJ_ETOOMANY);
 	status = PJ_ETOOMANY;
+	errorCode = 3;// ADDED BY TERMI
 	goto on_error;
     }
 
@@ -876,6 +885,7 @@ PJ_DEF(pj_status_t) pjsua_call_make_call(pjsua_acc_id acc_id,
     status = apply_call_setting(call, opt, NULL);
     if (status != PJ_SUCCESS) {
 	pjsua_perror(THIS_FILE, "Failed to apply call setting", status);
+	errorCode = 4;// ADDED BY TERMI
 	goto on_error;
     }
     
@@ -888,8 +898,10 @@ PJ_DEF(pj_status_t) pjsua_call_make_call(pjsua_acc_id acc_id,
 	pjsua_var.null_snd==NULL && !pjsua_var.no_snd && call->opt.aud_cnt > 0)
     {
 	status = pjsua_set_snd_dev(pjsua_var.cap_dev, pjsua_var.play_dev);
-	if (status != PJ_SUCCESS)
+	if (status != PJ_SUCCESS) {// ADDED BY TERMI
+		errorCode = 1;// ADDED BY TERMI
 	    goto on_error;
+	    }// ADDED BY TERMI
     }
 
     /* Create temporary pool */
@@ -911,6 +923,7 @@ PJ_DEF(pj_status_t) pjsua_call_make_call(pjsua_acc_id acc_id,
 	    pjsua_perror(THIS_FILE, "Unable to make call",
 			 PJSIP_EINVALIDREQURI);
 	    status = PJSIP_EINVALIDREQURI;
+		errorCode = 5;// ADDED BY TERMI
 	    goto on_error;
 	}
     }
@@ -932,6 +945,7 @@ PJ_DEF(pj_status_t) pjsua_call_make_call(pjsua_acc_id acc_id,
 	if (status != PJ_SUCCESS) {
 	    pjsua_perror(THIS_FILE, "Unable to generate Contact header",
 			 status);
+		errorCode = 6;// ADDED BY TERMI
 	    goto on_error;
 	}
     }
@@ -945,8 +959,21 @@ PJ_DEF(pj_status_t) pjsua_call_make_call(pjsua_acc_id acc_id,
                                    &dlg);
     if (status != PJ_SUCCESS) {
 	pjsua_perror(THIS_FILE, "Dialog creation failed", status);
+	errorCode = 7;// ADDED BY TERMI
 	goto on_error;
     }
+
+	// ADDED BY TERMI START
+	if (pjsua_var.ua_cfg.cb.on_outgoing_call_start1) {
+	    pjsua_var.ua_cfg.cb.on_outgoing_call_start1(acc_id, call_id, dest_uri, &contact, &dlg->call_id->id);
+	}
+	/*
+	fflush(stdout);
+	PJ_LOG(4,(THIS_FILE, "Outcoming call:: id: #%d, with acc: #%d, to: %.*s, from: %.*s, Call-ID: %.*s",
+		call_id, acc_id, (int)dest_uri->slen, dest_uri->ptr, (int)acc->contact.slen, acc->contact.ptr, (int)dlg->call_id->id.slen, dlg->call_id->id.ptr));
+	fflush(stdout);
+	*/
+	// ADDED BY TERMI END
 
     /* Increment the dialog's lock otherwise when invite session creation
      * fails the dialog will be destroyed prematurely.
@@ -985,11 +1012,14 @@ PJ_DEF(pj_status_t) pjsua_call_make_call(pjsua_acc_id acc_id,
     }
     if (status == PJ_SUCCESS) {
         status = on_make_call_med_tp_complete(call->index, NULL);
-        if (status != PJ_SUCCESS)
+        if (status != PJ_SUCCESS) {
+		errorCode = 8;// ADDED BY TERMI
 	    goto on_error;
+	    }
     } else if (status != PJ_EPENDING) {
 	pjsua_perror(THIS_FILE, "Error initializing media channel", status);
         pjsip_dlg_dec_session(dlg, &pjsua_var.mod);
+	errorCode = 9;// ADDED BY TERMI
 	goto on_error;
     }
 
@@ -1003,6 +1033,12 @@ PJ_DEF(pj_status_t) pjsua_call_make_call(pjsua_acc_id acc_id,
     PJSUA_UNLOCK();
 
     pj_log_pop_indent();
+
+	// ADDED BY TERMI START
+	if (pjsua_var.ua_cfg.cb.on_outgoing_call1) {
+	    pjsua_var.ua_cfg.cb.on_outgoing_call1(acc_id, call_id, dest_uri, &contact);
+	}
+	// ADDED BY TERMI END
 
     return PJ_SUCCESS;
 
@@ -1025,6 +1061,13 @@ on_error:
     PJSUA_UNLOCK();
 
     pj_log_pop_indent();
+
+	// ADDED BY TERMI START
+	if (pjsua_var.ua_cfg.cb.on_outgoing_call_error1) {
+	    pjsua_var.ua_cfg.cb.on_outgoing_call_error1(acc_id, call_id, dest_uri, &contact, errorCode, status);
+	}
+	// ADDED BY TERMI END
+
     return status;
 }
 
@@ -2819,7 +2862,7 @@ static pj_status_t call_inv_end_session(pjsua_call *call,
 		     status);
 	goto on_return;
     }
-    
+
 on_return:
     if (status != PJ_SUCCESS) {
     	pj_time_val delay;
@@ -2830,7 +2873,7 @@ on_return:
     	    pjsip_inv_terminate(call->inv, call->hangup_code, PJ_TRUE);
     	    return PJ_SUCCESS;
     	}
-    	    
+
     	if (call->hangup_retry == 0) {
     	    pj_timer_entry_init(&call->hangup_timer, PJ_FALSE,
 				(void*)call, &hangup_timer_cb);
@@ -2896,9 +2939,13 @@ PJ_DEF(pj_status_t) pjsua_call_hangup(pjsua_call_id call_id,
 				      const pj_str_t *reason,
 				      const pjsua_msg_data *msg_data)
 {
+    /*// ADDED BY TERMI: origin
     pjsua_call *call;
+    */
+    pjsua_call *call = NULL;// ADDED BY TERMI
     pjsip_dialog *dlg = NULL;
     pj_status_t status;
+	int errorCode = 0;// ADDED BY TERMI
 
     if (call_id<0 || call_id>=(int)pjsua_var.ua_cfg.max_calls) {
 	PJ_LOG(1,(THIS_FILE, "pjsua_call_hangup(): invalid call id %d",
@@ -2912,8 +2959,10 @@ PJ_DEF(pj_status_t) pjsua_call_hangup(pjsua_call_id call_id,
     pj_log_push_indent();
 
     status = acquire_call("pjsua_call_hangup()", call_id, &call, &dlg);
-    if (status != PJ_SUCCESS)
+    if (status != PJ_SUCCESS) {// ADDED BY TERMI
+	errorCode = 1;// ADDED BY TERMI
 	goto on_return;
+	}// ADDED BY TERMI
 
     if (!call->hanging_up) {
 	pjsip_event user_event;
@@ -2989,6 +3038,37 @@ PJ_DEF(pj_status_t) pjsua_call_hangup(pjsua_call_id call_id,
 on_return:
     if (dlg) pjsip_dlg_dec_lock(dlg);
     pj_log_pop_indent();
+
+	// ADDED BY TERMI START
+	if (pjsua_var.ua_cfg.cb.on_call_hangup1) {
+		pj_str_t reason1;
+		int acc_id = -1;
+
+		if (call != NULL) {
+			acc_id = call->acc_id;
+		}
+
+		if (reason != NULL) {
+			reason1 = *reason;
+		} else {
+			reason1 = pj_str("");
+		}
+
+		if (errorCode == 0) {
+			pjsua_var.ua_cfg.cb.on_call_hangup1(acc_id, call_id, code, &reason1);
+		}
+		// TODO: В новой версии, вызывается функция call_inv_end_session, которая пытается несколько раз
+		//  завершить звонок (по таймауту), а если не получилось нормально завершить звонок, то просто
+		//  принудительно его завершает.
+		//  Поэтому, коллбек on_call_hangup_error1 теперь сработает только если вызов
+		//  `status = acquire_call("pjsua_call_hangup()", call_id, &call, &dlg);` вернул в status НЕ PJ_SUCCESS
+		//  и, возможно, это и так нормальное завершение звонока (это нужно проверить).
+		else if (pjsua_var.ua_cfg.cb.on_call_hangup_error1) {
+			pjsua_var.ua_cfg.cb.on_call_hangup_error1(acc_id, call_id, code, &reason1, errorCode, status);
+		}
+	}
+	// ADDED BY TERMI END
+
     return status;
 }
 
@@ -3033,11 +3113,15 @@ PJ_DEF(pj_status_t) pjsua_call_set_hold2(pjsua_call_id call_id,
 					 const pjsua_msg_data *msg_data)
 {
     pjmedia_sdp_session *sdp;
+    /* // ADDED BY TERMI: origin
     pjsua_call *call;
+    */
+    pjsua_call *call = NULL;// ADDED BY TERMI
     pjsip_dialog *dlg = NULL;
     pjsip_tx_data *tdata;
     pj_str_t *new_contact = NULL;
     pj_status_t status;
+	int errorCode = 0;// ADDED BY TERMI
 
     PJ_ASSERT_RETURN(call_id>=0 && call_id<(int)pjsua_var.ua_cfg.max_calls,
 		     PJ_EINVAL);
@@ -3046,25 +3130,32 @@ PJ_DEF(pj_status_t) pjsua_call_set_hold2(pjsua_call_id call_id,
     pj_log_push_indent();
 
     status = acquire_call("pjsua_call_set_hold()", call_id, &call, &dlg);
-    if (status != PJ_SUCCESS)
+    if (status != PJ_SUCCESS) {// ADDED BY TERMI
+	errorCode = 1;// ADDED BY TERMI
 	goto on_return;
+	}// ADDED BY TERMI
 
     if (call->inv->state != PJSIP_INV_STATE_CONFIRMED) {
 	PJ_LOG(3,(THIS_FILE, "Can not hold call that is not confirmed"));
 	status = PJSIP_ESESSIONSTATE;
+	errorCode = 2;// ADDED BY TERMI
 	goto on_return;
     }
 
     /* We may need to re-initialize media before creating SDP */
     if (call->med_prov_cnt == 0) {
     	status = apply_call_setting(call, &call->opt, NULL);
-    	if (status != PJ_SUCCESS)
+    	if (status != PJ_SUCCESS) {// ADDED BY TERMI
+        errorCode = 3;// ADDED BY TERMI
 	    goto on_return;
+		}// ADDED BY TERMI
     }
 
     status = create_sdp_of_call_hold(call, &sdp);
-    if (status != PJ_SUCCESS)
+    if (status != PJ_SUCCESS) {// ADDED BY TERMI
+	errorCode = 4;// ADDED BY TERMI
 	goto on_return;
+	}// ADDED BY TERMI
 
     if ((options & PJSUA_CALL_UPDATE_CONTACT) &&
 	pjsua_acc_is_valid(call->acc_id))
@@ -3084,6 +3175,7 @@ PJ_DEF(pj_status_t) pjsua_call_set_hold2(pjsua_call_id call_id,
 	status = dlg_set_target(dlg, &msg_data->target_uri);
 	if (status != PJ_SUCCESS) {
 	    pjsua_perror(THIS_FILE, "Unable to set new target", status);
+		errorCode = 5;// ADDED BY TERMI
 	    goto on_return;
 	}
     }
@@ -3092,6 +3184,7 @@ PJ_DEF(pj_status_t) pjsua_call_set_hold2(pjsua_call_id call_id,
     status = pjsip_inv_reinvite( call->inv, new_contact, sdp, &tdata);
     if (status != PJ_SUCCESS) {
 	pjsua_perror(THIS_FILE, "Unable to create re-INVITE", status);
+	errorCode = 6;// ADDED BY TERMI
 	goto on_return;
     }
 
@@ -3106,6 +3199,7 @@ PJ_DEF(pj_status_t) pjsua_call_set_hold2(pjsua_call_id call_id,
     if (status != PJ_SUCCESS) {
 	pjsua_perror(THIS_FILE, "Unable to send re-INVITE", status);
 	call->hold_msg = NULL;
+	errorCode = 7;// ADDED BY TERMI
 	goto on_return;
     }
 
@@ -3118,6 +3212,27 @@ PJ_DEF(pj_status_t) pjsua_call_set_hold2(pjsua_call_id call_id,
 on_return:
     if (dlg) pjsip_dlg_dec_lock(dlg);
     pj_log_pop_indent();
+
+	// ADDED BY TERMI START
+	if (pjsua_var.ua_cfg.cb.on_call_hold1) {
+		int acc_id = -1;
+
+		if (call != NULL) {
+			acc_id = call->acc_id;
+		}
+		if (errorCode == 0) {
+			if (pjsua_var.ua_cfg.cb.on_call_hold1) {
+				pjsua_var.ua_cfg.cb.on_call_hold1(call->acc_id, call_id/*, new_contact*/);
+			}
+		}
+		else {
+			if (pjsua_var.ua_cfg.cb.on_call_hold_error1) {
+				pjsua_var.ua_cfg.cb.on_call_hold_error1(acc_id, call_id, errorCode, status);
+			}
+		}
+	}
+	// ADDED BY TERMI END
+
     return status;
 }
 
@@ -3158,9 +3273,13 @@ PJ_DEF(pj_status_t) pjsua_call_reinvite2(pjsua_call_id call_id,
     pjmedia_sdp_session *sdp = NULL;
     pj_str_t *new_contact = NULL;
     pjsip_tx_data *tdata;
+    /* // ADDED BY TERMI: origin
     pjsua_call *call;
+    */
+    pjsua_call *call = NULL;// ADDED BY TERMI
     pjsip_dialog *dlg = NULL;
     pj_status_t status;
+	int errorCode = 0;// ADDED BY TERMI
 
 
     PJ_ASSERT_RETURN(call_id>=0 && call_id<(int)pjsua_var.ua_cfg.max_calls,
@@ -3170,17 +3289,21 @@ PJ_DEF(pj_status_t) pjsua_call_reinvite2(pjsua_call_id call_id,
     pj_log_push_indent();
 
     status = acquire_call("pjsua_call_reinvite2()", call_id, &call, &dlg);
-    if (status != PJ_SUCCESS)
+    if (status != PJ_SUCCESS) {// ADDED BY TERMI
+	errorCode = 1;// ADDED BY TERMI
 	goto on_return;
+	}// ADDED BY TERMI
 
     if (pjsua_call_media_is_changing(call)) {
 	PJ_LOG(1,(THIS_FILE, "Unable to reinvite" ERR_MEDIA_CHANGING));
+	errorCode = 10;// ADDED BY TERMI
 	status = PJ_EINVALIDOP;
 	goto on_return;
     }
 
     if (call->inv->state != PJSIP_INV_STATE_CONFIRMED) {
 	PJ_LOG(3,(THIS_FILE, "Can not re-INVITE call that is not confirmed"));
+	errorCode = 2;// ADDED BY TERMI
 	status = PJSIP_ESESSIONSTATE;
 	goto on_return;
     }
@@ -3188,6 +3311,7 @@ PJ_DEF(pj_status_t) pjsua_call_reinvite2(pjsua_call_id call_id,
     status = apply_call_setting(call, opt, NULL);
     if (status != PJ_SUCCESS) {
 	pjsua_perror(THIS_FILE, "Failed to apply call setting", status);
+	errorCode = 3;// ADDED BY TERMI
 	goto on_return;
     }
 
@@ -3202,6 +3326,7 @@ PJ_DEF(pj_status_t) pjsua_call_reinvite2(pjsua_call_id call_id,
     if (status != PJ_SUCCESS) {
 	pjsua_perror(THIS_FILE, "Unable to get SDP from media endpoint",
 		     status);
+	errorCode = 4;// ADDED BY TERMI
 	goto on_return;
     }
 
@@ -3223,6 +3348,7 @@ PJ_DEF(pj_status_t) pjsua_call_reinvite2(pjsua_call_id call_id,
 	status = dlg_set_target(dlg, &msg_data->target_uri);
 	if (status != PJ_SUCCESS) {
 	    pjsua_perror(THIS_FILE, "Unable to set new target", status);
+		errorCode = 5;// ADDED BY TERMI
 	    goto on_return;
 	}
     }
@@ -3231,6 +3357,7 @@ PJ_DEF(pj_status_t) pjsua_call_reinvite2(pjsua_call_id call_id,
     status = pjsip_inv_reinvite( call->inv, new_contact, sdp, &tdata);
     if (status != PJ_SUCCESS) {
 	pjsua_perror(THIS_FILE, "Unable to create re-INVITE", status);
+	errorCode = 6;// ADDED BY TERMI
 	goto on_return;
     }
 
@@ -3247,12 +3374,33 @@ PJ_DEF(pj_status_t) pjsua_call_reinvite2(pjsua_call_id call_id,
     	call->local_hold = PJ_FALSE;
     } else if (status != PJ_SUCCESS) {
 	pjsua_perror(THIS_FILE, "Unable to send re-INVITE", status);
+	errorCode = 7;// ADDED BY TERMI
 	goto on_return;
     }
 
 on_return:
     if (dlg) pjsip_dlg_dec_lock(dlg);
     pj_log_pop_indent();
+
+	// ADDED BY TERMI START
+	if (pjsua_var.ua_cfg.cb.on_call_unhold1) {
+		int acc_id = -1;
+
+		if (call != NULL) {
+			acc_id = call->acc_id;
+		}
+
+		if (errorCode == 0) {
+			pjsua_var.ua_cfg.cb.on_call_unhold1(acc_id, call_id);
+		}
+		else {
+			if (pjsua_var.ua_cfg.cb.on_call_unhold_error1) {
+				pjsua_var.ua_cfg.cb.on_call_unhold_error1(acc_id, call_id, errorCode, status);
+			}
+		}
+	}
+	// ADDED BY TERMI END
+
     return status;
 }
 
@@ -3389,21 +3537,37 @@ on_return:
 }
 
 
+ // ADDED BY TERMI START
+ PJ_DEF(pj_status_t) pjsua_call_xfer( pjsua_call_id call_id,
+				     const pj_str_t *dest,
+				     const pjsua_msg_data *msg_data
+					 )
+ {
+	 return pjsua_call_xfer__2(call_id, dest, msg_data, -1);
+ }
+ // ADDED BY TERMI END
+
 /*
  * Initiate call transfer to the specified address.
  */
-PJ_DEF(pj_status_t) pjsua_call_xfer( pjsua_call_id call_id,
+ PJ_DEF(pj_status_t) pjsua_call_xfer__2( pjsua_call_id call_id, // ADDED BY TERMI: rename pjsua_call_xfer -> pjsua_call_xfer__2
 				     const pj_str_t *dest,
-				     const pjsua_msg_data *msg_data)
+				     const pjsua_msg_data *msg_data,
+					 pjsua_call_id dest_call_id// ADDED BY TERMI
+					 )
 {
     pjsip_evsub *sub;
     pjsip_tx_data *tdata;
+    /* // ADDED BY TERMI: origin
     pjsua_call *call;
+    */
+    pjsua_call *call = NULL;// ADDED BY TERMI
     pjsip_dialog *dlg = NULL;
     pjsip_generic_string_hdr *gs_hdr;
     const pj_str_t str_ref_by = { "Referred-By", 11 };
     struct pjsip_evsub_user xfer_cb;
     pj_status_t status;
+	int errorCode = 0;// ADDED BY TERMI
 
 
     PJ_ASSERT_RETURN(call_id>=0 && call_id<(int)pjsua_var.ua_cfg.max_calls &&
@@ -3414,8 +3578,10 @@ PJ_DEF(pj_status_t) pjsua_call_xfer( pjsua_call_id call_id,
     pj_log_push_indent();
 
     status = acquire_call("pjsua_call_xfer()", call_id, &call, &dlg);
-    if (status != PJ_SUCCESS)
+    if (status != PJ_SUCCESS) {// ADDED BY TERMI
+	errorCode = 1;// ADDED BY TERMI
 	goto on_return;
+	}// ADDED BY TERMI
 
     /* Create xfer client subscription. */
     pj_bzero(&xfer_cb, sizeof(xfer_cb));
@@ -3424,6 +3590,7 @@ PJ_DEF(pj_status_t) pjsua_call_xfer( pjsua_call_id call_id,
     status = pjsip_xfer_create_uac(call->inv->dlg, &xfer_cb, &sub);
     if (status != PJ_SUCCESS) {
 	pjsua_perror(THIS_FILE, "Unable to create xfer", status);
+	errorCode = 2;// ADDED BY TERMI
 	goto on_return;
     }
 
@@ -3436,6 +3603,7 @@ PJ_DEF(pj_status_t) pjsua_call_xfer( pjsua_call_id call_id,
     status = pjsip_xfer_initiate(sub, dest, &tdata);
     if (status != PJ_SUCCESS) {
 	pjsua_perror(THIS_FILE, "Unable to create REFER request", status);
+	errorCode = 3;// ADDED BY TERMI
 	goto on_return;
     }
 
@@ -3452,6 +3620,7 @@ PJ_DEF(pj_status_t) pjsua_call_xfer( pjsua_call_id call_id,
     status = pjsip_xfer_send_request(sub, tdata);
     if (status != PJ_SUCCESS) {
 	pjsua_perror(THIS_FILE, "Unable to send REFER request", status);
+	errorCode = 4;// ADDED BY TERMI
 	goto on_return;
     }
 
@@ -3462,6 +3631,24 @@ PJ_DEF(pj_status_t) pjsua_call_xfer( pjsua_call_id call_id,
 on_return:
     if (dlg) pjsip_dlg_dec_lock(dlg);
     pj_log_pop_indent();
+
+	// ADDED BY TERMI START
+	if (pjsua_var.ua_cfg.cb.on_call_transfer1) {
+		int acc_id = -1;
+
+		if (call != NULL) {
+			acc_id = call->acc_id;
+		}
+
+		if (errorCode == 0) {
+			pjsua_var.ua_cfg.cb.on_call_transfer1(acc_id, call_id, dest, dest_call_id);
+		}
+		else {
+			pjsua_var.ua_cfg.cb.on_call_transfer_error1(acc_id, call_id, dest, dest_call_id, errorCode, status);
+		}
+	}
+	// ADDED BY TERMI END
+
     return status;
 
 }
@@ -3476,7 +3663,10 @@ PJ_DEF(pj_status_t) pjsua_call_xfer_replaces( pjsua_call_id call_id,
 					      const pjsua_msg_data *msg_data)
 {
     pjsua_call *dest_call;
+    /* // ADDED BY TERMI: origin
     pjsip_dialog *dest_dlg;
+    */
+    pjsip_dialog *dest_dlg = NULL;// ADDED BY TERMI
     char str_dest_buf[PJSIP_MAX_URL_SIZE*2];
     pj_str_t str_dest;
     int len;
@@ -3485,6 +3675,7 @@ PJ_DEF(pj_status_t) pjsua_call_xfer_replaces( pjsua_call_id call_id,
     pjsip_uri *uri;
     pj_status_t status;
     const pjsip_parser_const_t *pconst;
+	int errorCode = 0;// ADDED BY TERMI
 
 
     PJ_ASSERT_RETURN(call_id>=0 && call_id<(int)pjsua_var.ua_cfg.max_calls,
@@ -3500,8 +3691,14 @@ PJ_DEF(pj_status_t) pjsua_call_xfer_replaces( pjsua_call_id call_id,
     status = acquire_call("pjsua_call_xfer_replaces()", dest_call_id,
 			  &dest_call, &dest_dlg);
     if (status != PJ_SUCCESS) {
+    /* // ADDED BY TERMI: commented
 	pj_log_pop_indent();
+	*/
+	errorCode = 1;// ADDED BY TERMI
+	/* // ADDED BY TERMI: commented
 	return status;
+	*/
+	goto on_error;// ADDED BY TERMI
     }
 
     /*
@@ -3525,6 +3722,7 @@ PJ_DEF(pj_status_t) pjsua_call_xfer_replaces( pjsua_call_id call_id,
 		          str_dest_buf+1, sizeof(str_dest_buf)-1);
     if (len < 0) {
 	status = PJSIP_EURITOOLONG;
+	errorCode = 5;// ADDED BY TERMI
 	goto on_error;
     }
 
@@ -3543,6 +3741,7 @@ PJ_DEF(pj_status_t) pjsua_call_xfer_replaces( pjsua_call_id call_id,
      					  &pconst->pjsip_HDR_CHAR_SPEC);
     if (call_id_len < 0) {
     	status = PJSIP_EURITOOLONG;
+		errorCode = 6;// ADDED BY TERMI
     	goto on_error;
     }
 
@@ -3563,14 +3762,21 @@ PJ_DEF(pj_status_t) pjsua_call_xfer_replaces( pjsua_call_id call_id,
 			   dest_dlg->local.info->tag.ptr);
 
     PJ_ASSERT_ON_FAIL(len > 0 && len <= (int)sizeof(str_dest_buf)-str_dest.slen,
-		      { status=PJSIP_EURITOOLONG; goto on_error; });
+	{
+		status=PJSIP_EURITOOLONG;
+		errorCode = 7;// ADDED BY TERMI
+		goto on_error;
+	});
 
     str_dest.ptr = str_dest_buf;
     str_dest.slen += len;
 
     pjsip_dlg_dec_lock(dest_dlg);
 
+/*// ADDED BY TERMI: commented by TERMI
     status = pjsua_call_xfer(call_id, &str_dest, msg_data);
+*/
+    status = pjsua_call_xfer__2(call_id, &str_dest, msg_data, dest_call_id);// ADDED BY TERMI
 
     pj_log_pop_indent();
     return status;
@@ -3578,6 +3784,13 @@ PJ_DEF(pj_status_t) pjsua_call_xfer_replaces( pjsua_call_id call_id,
 on_error:
     if (dest_dlg) pjsip_dlg_dec_lock(dest_dlg);
     pj_log_pop_indent();
+
+	// ADDED BY TERMI START
+	if (pjsua_var.ua_cfg.cb.on_call_transfer_error1) {
+		pjsua_var.ua_cfg.cb.on_call_transfer_error1(-1, call_id, &str_dest, dest_call_id, errorCode, status);
+	}
+	// ADDED BY TERMI END
+
     return status;
 }
 
@@ -3843,6 +4056,12 @@ PJ_DEF(void) pjsua_call_hangup_all(void)
 	if (pjsua_var.calls[i].inv)
 	    pjsua_call_hangup(i, 0, NULL, NULL);
     }
+
+	// ADDED BY TERMI START
+	if (pjsua_var.ua_cfg.cb.on_call_hangup_all1) {
+		pjsua_var.ua_cfg.cb.on_call_hangup_all1();
+	}
+	// ADDED BY TERMI END
 
     //PJSUA_UNLOCK();
     pj_log_pop_indent();

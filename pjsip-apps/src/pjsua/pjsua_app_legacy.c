@@ -20,6 +20,7 @@
 
 #include <pjsua-lib/pjsua.h>
 #include "pjsua_app_common.h"
+#include <easywsclient.h>// ADDED BY TERMI
 
 #define THIS_FILE	"pjsua_app_legacy.c"
 
@@ -96,6 +97,68 @@ static void ui_input_url(const char *title, char *buf, pj_size_t len,
     if (fgets(buf, (int)len, stdin) == NULL)
 	return;
     len = strlen(buf);
+
+    /* Left trim */
+    while (pj_isspace(*buf)) {
+	++buf;
+	--len;
+    }
+
+    /* Remove trailing newlines */
+    while (len && (buf[len-1] == '\r' || buf[len-1] == '\n'))
+	buf[--len] = '\0';
+
+    if (len == 0 || buf[0]=='q')
+	return;
+
+    if (pj_isdigit(*buf) || *buf=='-') {
+
+	unsigned i;
+
+	if (*buf=='-')
+	    i = 1;
+	else
+	    i = 0;
+
+	for (; i<len; ++i) {
+	    if (!pj_isdigit(buf[i])) {
+		puts("Invalid input");
+		return;
+	    }
+	}
+
+	result->nb_result = my_atoi(buf);
+
+	if (result->nb_result >= 0 &&
+	    result->nb_result <= (int)pjsua_get_buddy_count())
+	{
+	    return;
+	}
+	if (result->nb_result == -1)
+	    return;
+
+	puts("Invalid input");
+	result->nb_result = PJSUA_APP_NO_NB;
+	return;
+
+    } else {
+	pj_status_t status;
+
+	if ((status=pjsua_verify_url(buf)) != PJ_SUCCESS) {
+	    pjsua_perror(THIS_FILE, "Invalid URL", status);
+	    return;
+	}
+
+	result->uri_result = buf;
+    }
+}
+
+static void ui_input_url_parse_buf(char *buf, input_result *result)// ADDED BY TERMI
+{
+    int len = strlen(buf);
+
+    result->nb_result = PJSUA_APP_NO_NB;// ADDED BY TERMI
+    result->uri_result = NULL;// ADDED BY TERMI
 
     /* Left trim */
     while (pj_isspace(*buf)) {
@@ -686,7 +749,7 @@ on_error:
 #endif /* PJSUA_HAS_VIDEO */
 
 /** UI Command **/
-static void ui_make_new_call()
+static void ui_make_new_call(char * menuin)// ADDED BY TERMI
 {
     char buf[128];
     pjsua_msg_data msg_data_;
@@ -695,7 +758,18 @@ static void ui_make_new_call()
 
     printf("(You currently have %d calls)\n", pjsua_call_get_count());
 
+    // ADDED BY TERMI START
+	if (menuin[1]=='-') {
+		char ch;
+
+		sscanf(menuin, "%c-%127s", &ch, &buf);
+		ui_input_url_parse_buf(buf, &result);
+	}
+	else {
+	// ADDED BY TERMI END
     ui_input_url("Make call", buf, sizeof(buf), &result);
+	}// ADDED BY TERMI
+
     if (result.nb_result != PJSUA_APP_NO_NB) {
 
 	if (result.nb_result == -1 || result.nb_result == 0) {
@@ -715,6 +789,20 @@ static void ui_make_new_call()
     }
 
     pjsua_msg_data_init(&msg_data_);
+
+	// ADDED BY TERMI START
+	/* TODO:: add custom headers
+		// http://lists.pjsip.org/pipermail/pjsip_lists.pjsip.org/2014-December/018033.html
+	{
+		pjsip_generic_string_hdr warn;
+		pj_str_t hname = pj_str("X-TestHeader");
+		pj_str_t hvalue = pj_str("Test message");
+		pjsip_generic_string_hdr_init2(&warn, &hname, &hvalue);
+		pj_list_push_back(&msg_data_.hdr_list, &warn);
+	}
+		*/
+	// ADDED BY TERMI END
+
     TEST_MULTIPART(&msg_data_);
     pjsua_call_make_call(current_acc, &tmp, &call_opt, NULL,
 			 &msg_data_, &current_call);
@@ -836,7 +924,7 @@ static void ui_send_instant_message()
     }
 }
 
-static void ui_answer_call()
+static void ui_answer_call(char menuin[])// ADDED BY TERMI
 {
     pjsua_call_info call_info;
     char buf[128];
@@ -854,6 +942,7 @@ static void ui_answer_call()
 	call_info.role != PJSIP_ROLE_UAS ||
 	call_info.state >= PJSIP_INV_STATE_CONNECTING)
     {
+		//PJ_LOG(1,(THIS_FILE, " -- No pending incoming call = %d", current_call));// ADDED BY TERMI / TERMI TEMP
 	puts("No pending incoming call");
 	fflush(stdout);
 	return;
@@ -865,10 +954,22 @@ static void ui_answer_call()
 	pj_str_t hvalue;
 	pjsip_generic_string_hdr hcontact;
 
+	// ADDED BY TERMI START
+	if (menuin[1]=='-') {
+		char ch;
+		int cc;
+		sscanf(menuin, "%c-%d-%d", &ch, &cc, &st_code);
+
+		//PJ_LOG(3,(THIS_FILE, " -- st_code = %d", st_code));// TERMI TEMP
+	}
+	else// ADDED BY TERMI END
+	{
 	if (!simple_input("Answer with code (100-699)", buf, sizeof(buf)))
 	    return;
 
 	st_code = my_atoi(buf);
+	}// ADDED BY TERMI
+
 	if (st_code < 100)
 	    return;
 
@@ -928,6 +1029,9 @@ static void ui_cycle_dialog(char menuin[])
 	pjsua_call_info call_info;
 
 	pjsua_call_get_info(current_call, &call_info);
+	/*// ADDED BY TERMI
+	PJ_LOG(3,(THIS_FILE,"Current call id: %d", current_call));
+	*/
 	PJ_LOG(3,(THIS_FILE,"Current dialog: %.*s",
 	    (int)call_info.remote_info.slen,
 	    call_info.remote_info.ptr));
@@ -1150,7 +1254,7 @@ static void ui_manage_codec_prio()
 	pjsua_perror(THIS_FILE, "Error setting codec priority", status);
 }
 
-static void ui_call_transfer(pj_bool_t no_refersub)
+static void ui_call_transfer(pj_bool_t no_refersub, char menuin[])// ADDED BY TERMI
 {
     if (current_call == -1) {
 	PJ_LOG(3,(THIS_FILE, "No current call"));
@@ -1168,7 +1272,17 @@ static void ui_call_transfer(pj_bool_t no_refersub)
 	printf("Transferring current call [%d] %.*s\n", current_call,
 	       (int)ci.remote_info.slen, ci.remote_info.ptr);
 
+	// ADDED BY TERMI START
+	if (menuin[1]=='-') {
+		int cc;
+		char ch;
+
+		sscanf(menuin, "%c-%d-%127s", &ch, &cc, buf);
+		ui_input_url_parse_buf(buf, &result);
+	}
+	else {// ADDED BY TERMI END
 	ui_input_url("Transfer to URL", buf, sizeof(buf), &result);
+	}// ADDED BY TERMI
 
 	/* Check if call is still there. */
 
@@ -1201,7 +1315,7 @@ static void ui_call_transfer(pj_bool_t no_refersub)
     }
 }
 
-static void ui_call_transfer_replaces(pj_bool_t no_refersub)
+static void ui_call_transfer_replaces(pj_bool_t no_refersub, char menuin[])// ADDED BY TERMI
 {
     if (current_call == -1) {
 	PJ_LOG(3,(THIS_FILE, "No current call"));
@@ -1245,10 +1359,20 @@ static void ui_call_transfer_replaces(pj_bool_t no_refersub)
 		call_info.state_text.ptr);
 	}
 
+	// ADDED BY TERMI START
+	if (menuin[1]=='-') {
+		int cc;
+		char ch;
+
+		sscanf(menuin, "%c-%d-%d", &ch, &cc, &dst_call);
+	}
+	else {// ADDED BY TERMI END
 	if (!simple_input("Enter call number to be replaced", buf, sizeof(buf)))
 	    return;
 
 	dst_call = my_atoi(buf);
+	}// ADDED BY TERMI
+
 
 	/* Check if call is still there. */
 
@@ -1286,7 +1410,7 @@ static void ui_call_transfer_replaces(pj_bool_t no_refersub)
     }
 }
 
-static void ui_send_dtmf_2833()
+static void ui_send_dtmf_2833(char menuin[])// ADDED BY TERMI
 {
     if (current_call == -1) {
 	PJ_LOG(3,(THIS_FILE, "No current call"));
@@ -1298,7 +1422,16 @@ static void ui_send_dtmf_2833()
 	pj_status_t status;
 	char buf[128];
 
-#if defined(PJMEDIA_HAS_DTMF_FLASH) && PJMEDIA_HAS_DTMF_FLASH!= 0	    	
+	// ADDED BY TERMI START
+	if (strlen(menuin) > 2 && menuin[1]=='-') {
+		// current_call из menuin уже установлен с помощью auto_select_call
+		int cc;
+		char ch;
+
+		sscanf(menuin, "%c-%d-%127s", &ch, &cc, buf);
+	}
+	else {// ADDED BY TERMI END
+#if defined(PJMEDIA_HAS_DTMF_FLASH) && PJMEDIA_HAS_DTMF_FLASH!= 0
 	if (!simple_input("DTMF strings to send (0-9*R#A-B)", buf,
 	    sizeof(buf)))
 #else
@@ -1308,6 +1441,7 @@ static void ui_send_dtmf_2833()
 	{
 	    return;
 	}
+	}// ADDED BY TERMI
 
 	if (call != current_call) {
 	    puts("Call has been disconnected");
@@ -1324,7 +1458,7 @@ static void ui_send_dtmf_2833()
     }
 }
 
-static void ui_send_dtmf_info()
+static void ui_send_dtmf_info(char menuin[])// ADDED BY TERMI
 {
     if (current_call == -1) {
 	PJ_LOG(3,(THIS_FILE, "No current call"));
@@ -1334,13 +1468,25 @@ static void ui_send_dtmf_info()
 	char buf[128];
 	pjsua_call_send_dtmf_param param;
 
+	// ADDED BY TERMI START
+	if (strlen(menuin) > 2 && menuin[1]=='-') {
+		// current_call из menuin уже установлен с помощью auto_select_call
+		int cc;
+		char ch;
+
+		sscanf(menuin, "%c-%d-%127s", &ch, &cc, buf);
+	}
+	else {// ADDED BY TERMI END
 	if (!simple_input("DTMF strings to send (0-9*#A-B)", buf,
 	    sizeof(buf)))
 	{
+	    // ADDED BY TERMI: TODO: send event 'DTMF sending error'
 	    return;
 	}
+	}// ADDED BY TERMI
 
 	if (call != current_call) {
+	    // ADDED BY TERMI: TODO: send event 'DTMF sending error'
 	    puts("Call has been disconnected");
 	    return;
 	}	
@@ -1509,7 +1655,7 @@ static void ui_toggle_state()
 /*
  * Change extended online status.
  */
-static void ui_change_online_status()
+static void ui_change_online_status(char menuin1[])// ADDED BY TERMI
 {
     char menuin[32];
     pj_bool_t online_status;
@@ -1534,6 +1680,12 @@ static void ui_change_online_status()
 	{ OFFLINE, "Offline"}
     };
 
+    if (strlen(menuin1) > 2 && menuin1[1]=='-') {// ADDED BY TERMI START
+		sscanf(menuin1, "T-%d", &choice);
+
+		choice = choice - 1;
+	}
+	else {// ADDED BY TERMI END
     printf("\n"
 	   "Choices:\n");
     for (i=0; i<(unsigned)PJ_ARRAY_SIZE(opts); ++i) {
@@ -1544,6 +1696,8 @@ static void ui_change_online_status()
 	return;
 
     choice = atoi(menuin) - 1;
+	}// ADDED BY TERMI
+
     if (choice < 0 || choice >= OPT_MAX) {
 	puts("Invalid selection");
 	return;
@@ -1611,11 +1765,16 @@ static void ui_conf_list()
 	    pj_ansi_snprintf(s, sizeof(s), "#%d ", info.listeners[j]);
 	    pj_ansi_strcat(txlist, s);
 	}
+	/* //ADDED BY TERMI: (original):
 	printf("Port #%02d[%2dKHz/%dms/%d] %20.*s  transmitting to: %s\n",
+	*/
+	printf("Port #%02d[%2dKHz/%dms/%d(%f/%f)] %20.*s  transmitting to: %s\n",
 	       info.slot_id,
 	       info.clock_rate/1000,
 	       info.samples_per_frame*1000/info.channel_count/info.clock_rate,
 	       info.channel_count,
+		   info.tx_level_adj,//ADDED BY TERMI
+		   info.rx_level_adj,//ADDED BY TERMI
 	       (int)info.name.slen,
 	       info.name.ptr,
 	       txlist);
@@ -1659,10 +1818,32 @@ static void ui_conf_connect(char menuin[])
     }
 }
 
-static void ui_adjust_volume()
+static void ui_adjust_volume(char menuin[])// ADDED BY TERMI
 {
     char buf[128];
     char text[128];
+
+	// ADDED BY TERMI START
+	if (strlen(menuin) > 2 && menuin[1]=='-') {
+		int micLevel, speakerLevel;
+
+		sscanf(menuin, "V-%d-%d", &micLevel, &speakerLevel);
+
+		{
+			float micLevel2 = (float)micLevel / 100;
+			app_config.mic_level = micLevel2;
+			pjsua_conf_adjust_rx_level(0, app_config.mic_level);
+		}
+
+		{
+			float speakerLevel2 = (float)speakerLevel / 100;
+			app_config.speaker_level = speakerLevel2;
+			pjsua_conf_adjust_tx_level(0, app_config.speaker_level);
+		}
+		return;
+	}
+	// ADDED BY TERMI END
+
     sprintf(buf, "Adjust mic level: [%4.1fx] ", app_config.mic_level);
     if (simple_input(buf,text,sizeof(text))) {
 	char *err;
@@ -1762,6 +1943,76 @@ static void ui_handle_ip_change()
     pjsua_handle_ip_change(&param);
 }
 
+// ADDED BY TERMI START
+static pj_bool_t find_call(int new_current_call)
+{
+    int max = pjsua_call_get_max_count();
+
+	if (new_current_call >= 0 && new_current_call < max && pjsua_call_is_active(new_current_call)) {
+	    current_call = new_current_call;
+
+		//PJ_LOG(3,(THIS_FILE, " -- current_call = %d", current_call));// ADDED BY TERMI / TERMI TEMP
+
+	    return PJ_TRUE;
+	}
+
+	PJ_LOG(1,(THIS_FILE, "Error: invalid new_current_call = %d", new_current_call));// ADDED BY TERMI
+
+    current_call = PJSUA_INVALID_ID;
+    return PJ_FALSE;
+}
+
+// ADDED BY TERMI: static pj_bool_t auto_select_call(char menuin[])
+static pj_bool_t auto_select_call(char * menuin)
+{
+	switch (menuin[0]) {
+		case 'a':
+		case 'h':
+		case ']':
+		case '[':
+		case 'H':
+		case 'v':
+		case 'x':
+		case 'X':
+		case '#':
+		case '*':
+		case 'R':
+			if (strlen(menuin) > 2 && menuin[1]=='-') {
+				int new_current_call;
+				char ch;
+
+				sscanf(menuin, "%c-%d", &ch, &new_current_call);
+				find_call(new_current_call);
+
+				return PJ_TRUE;
+			}
+	}
+
+	return PJ_FALSE;
+}
+
+char * device_name_russian_workaround(char * buf, const char * name, const int max_size) {
+	char *pos = buf;
+	unsigned kk = 0;
+
+	pos[0] = '\0';
+
+	for ( ; kk < max_size ; ++kk) {
+		int code = (int)name[kk];
+
+		pos[0] = '\0';
+
+		if (code == 0)break;
+
+		pos += sprintf(pos, "%s%i", (kk > 0 ? "," : ""), code);
+	}
+
+	pos[0] = '\0';
+
+	return buf;
+}
+// ADDED BY TERMI END
+
 /*
  * Main "user interface" loop.
  */
@@ -1769,6 +2020,16 @@ void legacy_main(void)
 {
     char menuin[80];
     char buf[128];
+	int callAutoSelected;// ADDED BY TERMI
+
+	/* // ADDED BY TERMI: For example/sample only
+	printf("settingup mic_level to 1.0");
+	app_config.mic_level = (float)1.0;
+	pjsua_conf_adjust_rx_level(0, app_config.mic_level);
+	printf("settingup speaker_level to 1.0");
+	app_config.speaker_level = (float)1.0;
+	pjsua_conf_adjust_tx_level(0, app_config.speaker_level);
+	*/
 
     keystroke_help();
 
@@ -1809,11 +2070,13 @@ void legacy_main(void)
 	call_opt.aud_cnt = app_config.aud_cnt;
 	call_opt.vid_cnt = app_config.vid.vid_cnt;
 
+	callAutoSelected = (int)auto_select_call(menuin);// ADDED BY TERMI
+
 	switch (menuin[0]) {
 
 	case 'm':
 	    /* Make call! : */
-	    ui_make_new_call();
+	    ui_make_new_call(menuin);// ADDED BY TERMI
 	    break;
 
 	case 'M':
@@ -1831,7 +2094,7 @@ void legacy_main(void)
 	    break;
 
 	case 'a':
-	    ui_answer_call();
+	    ui_answer_call(menuin);// ADDED BY TERMI
 	    break;
 
 	case 'h':
@@ -1840,6 +2103,8 @@ void legacy_main(void)
 
 	case ']':
 	case '[':
+	    if (callAutoSelected==PJ_TRUE)break;// ADDED BY TERMI
+
 	    /*
 	     * Cycle next/prev dialog.
 	     */
@@ -1911,26 +2176,26 @@ void legacy_main(void)
 	    /*
 	     * Transfer call.
 	     */
-	    ui_call_transfer(app_config.no_refersub);
+	    ui_call_transfer(app_config.no_refersub, menuin);// ADDED BY TERMI
 	    break;
 
 	case 'X':
 	    /*
 	     * Transfer call with replaces.
 	     */
-	    ui_call_transfer_replaces(app_config.no_refersub);
+	    ui_call_transfer_replaces(app_config.no_refersub, menuin);// ADDED BY TERMI
 	    break;
 
 	case '#':
 	    /*
 	     * Send DTMF strings.
 	     */
-	    ui_send_dtmf_2833();
+	    ui_send_dtmf_2833(menuin);// ADDED BY TERMI
 	    break;
 
 	case '*':
 	    /* Send DTMF with INFO */
-	    ui_send_dtmf_info();
+	    ui_send_dtmf_info(menuin);// ADDED BY TERMI
 	    break;
 
 	case 'S':
@@ -1967,7 +2232,7 @@ void legacy_main(void)
 	    break;
 
 	case 'T':
-	    ui_change_online_status();
+	    ui_change_online_status(menuin);// ADDED BY TERMI
 	    break;
 
 	case 'c':
@@ -1984,7 +2249,7 @@ void legacy_main(void)
 
 	case 'V':
 	    /* Adjust audio volume */
-	    ui_adjust_volume();
+	    ui_adjust_volume(menuin);// ADDED BY TERMI
 	    break;
 
 	case 'd':
@@ -1992,6 +2257,40 @@ void legacy_main(void)
 		ui_dump_configuration();
 	    } else if (menuin[1] == 'q') {
 		ui_dump_call_quality();
+		// ADDED BY TERMI START
+	    } else if (menuin[1]=='V') {
+			int current_capture_dev, current_playback_dev;
+			pjsua_get_snd_dev(&current_capture_dev, &current_playback_dev);
+
+			if (menuin[2]=='c') {// set capture_dev id
+				int capture_dev;
+				sscanf(menuin, "dVc-%d", &capture_dev);
+
+				app_config.capture_dev = capture_dev;
+
+				if (current_capture_dev != capture_dev) {
+					pjsua_set_snd_dev(capture_dev, current_playback_dev);
+
+					current_capture_dev = capture_dev;
+				}
+			}
+			else if (menuin[2]=='p') {// set playback_dev id
+				int playback_dev;
+				sscanf(menuin, "dVp-%d", &playback_dev);
+
+				app_config.playback_dev = playback_dev;
+
+				if (current_playback_dev != playback_dev) {
+					pjsua_set_snd_dev(current_capture_dev, playback_dev);
+
+					current_playback_dev = playback_dev;
+				}
+			}
+
+			// message about current capture_dev and playback_dev ids
+			easywsclient_sendMessage("json::{\"type\":\"current_devices\",\"capture_dev_id\":%d,\"playback_dev_id\":%d}", current_capture_dev, current_playback_dev);
+		break;
+		// ADDED BY TERMI END
 	    } else {
 		ui_app_dump(menuin[1]=='d');
 	    }
@@ -2015,6 +2314,70 @@ void legacy_main(void)
 	case 'I': /* Handle IP change. */
 	    ui_handle_ip_change();
 	    break;
+
+	// ADDED BY TERMI START
+	case 'D': {
+		if (menuin[1] == 's') {
+			//#define MAX_DEV_COUNT64
+			pjmedia_aud_dev_info pj_info[64/*MAX_DEV_COUNT*/];
+			unsigned count = 64;//MAX_DEV_COUNT;
+
+			pj_status_t the_status = pjsua_enum_aud_devs(pj_info, &count);
+			if (the_status != PJ_SUCCESS) {
+				pjsua_perror(THIS_FILE, "Invalid pjsua_enum_aud_devs", the_status);
+			}
+			else {
+				//pj_enter_critical_section();
+
+				unsigned kk = 0;
+
+				// Workaround for russian strings
+				// Каждую русскую строку декодируем в массив примерно такой: [-51, -32, -13, -8, -19, -24] (тут закодировано: "Наушни")
+				// Для этого выделяем памяти по 5 (максимальное число символов в коде) * 32 (максимальная длинна имени, которую даёт pjsip) + 72 (на остальные символы json-сообщения)
+				// На стороне Агента этот массив может быть преобразован как String.fromCharCode(1104 + code) для каждого символа. Например: String.fromCharCode(1104 + (-51)) == "Н"
+				// TODO:: https://stackoverflow.com/questions/53160797/printing-bytes-of-utf-8-string-in-c
+				char *deviceStr = (char*)malloc(
+					count * (
+						sizeof(char) * 32/*max name size*/ +
+						sizeof(char) * 32/*max driver nam size*/ +
+						(1/*for ','*/ + 5 * sizeof(char) * 32)/*for array of string codes*/ +
+						sizeof(char) * 72/*json fields and symbols*/
+					));
+				int pos = 0;
+				char device_name_russian_buf[(1/*for ','*/ + 5/*5-digit number*/) * 32];
+
+				for (; kk < count ;++kk) {
+					pjmedia_aud_dev_info info = pj_info[kk];
+
+					pos += sprintf(&deviceStr[pos], "%s{\"id\":%d,\"name\":\"%s\",\"_name\":[%s],\"driver\":\"%s\",\"input_count\":%d,\"output_count\":%d}",
+						kk == 0 ? "" : ",",
+						kk,
+						info.name,
+						device_name_russian_workaround(device_name_russian_buf, info.name, 32),
+						info.driver,
+						info.input_count,
+						info.output_count);
+					/*
+					PJ_LOG(4, (THIS_FILE, " dev_id %d: %s  (in=%d, out=%d)",
+						kk,
+						info.name,
+						info.input_count,
+						info.output_count));
+					*/
+				}
+
+				easywsclient_sendMessage4000("json::{\"type\":\"divices_list\",\"list\":[%s]}", deviceStr);
+				free(deviceStr);
+				//pj_leave_critical_section();
+			}
+
+			break;
+		}
+		else {
+		printf("Invalid 'D' input %s\n", menuin);
+	    }
+	}
+	// ADDED BY TERMI END
 
 	default:
 	    if (menuin[0] != '\n' && menuin[0] != '\r') {

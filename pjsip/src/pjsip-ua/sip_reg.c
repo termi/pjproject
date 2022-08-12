@@ -617,7 +617,7 @@ PJ_DEF(pj_status_t) pjsip_regc_register(pjsip_regc *regc, pj_bool_t autoreg,
 	regc->timer.id = 0;
     }
 
-    /* Add Allow header (http://trac.pjsip.org/repos/ticket/1039) */
+    /* Add Allow header (https://github.com/pjsip/pjproject/issues/1039) */
     h_allow = pjsip_endpt_get_capability(regc->endpt, PJSIP_H_ALLOW, NULL);
     if (h_allow) {
 	pjsip_msg_add_hdr(msg, (pjsip_hdr*)
@@ -1359,6 +1359,28 @@ handle_err:
 						       PJSIP_REGC_MAX_CONTACT,
 						       contact);
 
+#if PJSIP_REGISTER_ALLOW_EXP_REFRESH
+	    if (expiration == 0 && regc->current_op != REGC_UNREGISTERING) {
+		/* Response contain expires contact param 0, allow client to
+		 * continue refresh registration.
+		 * Refer to: https://github.com/pjsip/pjproject/pull/2809
+		 */
+		const pjsip_msg *msg = rdata->msg_info.msg;
+		const pjsip_expires_hdr *expires;
+		expires = (const pjsip_expires_hdr*) pjsip_msg_find_hdr(msg, 
+							PJSIP_H_EXPIRES, NULL);
+
+		if (expires) {
+		    expiration = expires->ivalue;
+		} else if (regc->expires_hdr && regc->expires_hdr->ivalue) {
+		    expiration = regc->expires_hdr->ivalue;
+		} else {
+		    expiration = 3600;
+		}
+		PJ_LOG(4, (THIS_FILE, "Modify response's expiration from 0 "
+			   "to %d", expiration));
+	    }
+#endif
 	    /* Schedule next registration */
             schedule_registration(regc, expiration);
 
@@ -1460,7 +1482,7 @@ PJ_DEF(pj_status_t) pjsip_regc_send(pjsip_regc *regc, pjsip_tx_data *tdata)
     }
 
     /* Need to unlock the regc temporarily while sending the message to
-     * prevent deadlock (https://trac.pjsip.org/repos/ticket/1247).
+     * prevent deadlock (https://github.com/pjsip/pjproject/issues/1247).
      * It should be safe to do this since the regc's refcount has been
      * incremented.
      */

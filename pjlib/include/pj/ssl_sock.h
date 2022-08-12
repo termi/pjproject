@@ -60,6 +60,9 @@ typedef struct pj_ssl_sock_t pj_ssl_sock_t;
 typedef struct pj_ssl_cert_t pj_ssl_cert_t;
 
 
+/**
+ * Bitwise flag for SSL certificate verification.
+ */
 typedef enum pj_ssl_cert_verify_flag_t
 {
     /**
@@ -131,6 +134,9 @@ typedef enum pj_ssl_cert_verify_flag_t
 } pj_ssl_cert_verify_flag_t;
 
 
+/**
+ * Type of SSL certificate name.
+ */
 typedef enum pj_ssl_cert_name_type
 {
     PJ_SSL_CERT_NAME_UNKNOWN = 0,
@@ -202,6 +208,7 @@ typedef pj_str_t pj_ssl_cert_buffer;
  * suffix, e.g: "pjsip_rsa.pem", the library will automatically check for
  * other certificates with "_ecc" and "_dsa" suffix.
  *
+ * @param pool		The pool.
  * @param CA_file	The file of trusted CA list.
  * @param cert_file	The file of certificate.
  * @param privkey_file	The file of private key.
@@ -227,6 +234,7 @@ PJ_DECL(pj_status_t) pj_ssl_cert_load_from_files(pj_pool_t *pool,
  * accepts an additional param CA_path to load CA certificates from
  * a directory.
  *
+ * @param pool		The pool.
  * @param CA_file	The file of trusted CA list.
  * @param CA_path	The path to a directory of trusted CA list.
  * @param cert_file	The file of certificate.
@@ -250,9 +258,10 @@ PJ_DECL(pj_status_t) pj_ssl_cert_load_from_files2(
  * Create credential from data buffer. The certificate expected is in 
  * PEM format.
  *
- * @param CA_file	The buffer of trusted CA list.
- * @param cert_file	The buffer of certificate.
- * @param privkey_file	The buffer of private key.
+ * @param pool		The pool.
+ * @param CA_buf	The buffer of trusted CA list.
+ * @param cert_buf	The buffer of certificate.
+ * @param privkey_buf	The buffer of private key.
  * @param privkey_pass	The password of private key, if any.
  * @param p_cert	Pointer to credential instance to be created.
  *
@@ -479,7 +488,7 @@ typedef enum pj_ssl_curve
  * Get curve list supported by SSL/TLS backend.
  *
  * @param curves	The curves buffer to receive curve list.
- * @param curves_num	Maximum number of curves to be received.
+ * @param curve_num	Maximum number of curves to be received.
  *
  * @return		PJ_SUCCESS when successful.
  */
@@ -518,17 +527,17 @@ PJ_DECL(const char*) pj_ssl_curve_name(pj_ssl_curve curve);
  */
 PJ_DECL(pj_ssl_curve) pj_ssl_curve_id(const char *curve_name);
 
-/*
+/**
  * Entropy enumeration
  */
 typedef enum pj_ssl_entropy
 {
-	PJ_SSL_ENTROPY_NONE	= 0,
-	PJ_SSL_ENTROPY_EGD	= 1,
-	PJ_SSL_ENTROPY_RANDOM	= 2,
-	PJ_SSL_ENTROPY_URANDOM	= 3,
-	PJ_SSL_ENTROPY_FILE	= 4,
-	PJ_SSL_ENTROPY_UNKNOWN	= 0x0F
+	PJ_SSL_ENTROPY_NONE	= 0,	/**< None */
+	PJ_SSL_ENTROPY_EGD	= 1,	/**< EGD */
+	PJ_SSL_ENTROPY_RANDOM	= 2,	/**< Random */
+	PJ_SSL_ENTROPY_URANDOM	= 3,	/**< Urandom */
+	PJ_SSL_ENTROPY_FILE	= 4,	/**< File */
+	PJ_SSL_ENTROPY_UNKNOWN	= 0x0F	/**< Unknown */
 } pj_ssl_entropy_t;
 
 /**
@@ -668,6 +677,21 @@ typedef struct pj_ssl_sock_cb
      */
     pj_bool_t (*on_connect_complete)(pj_ssl_sock_t *ssock,
 				     pj_status_t status);
+    
+    /**
+     * This callback is called when certificate verification is being done.
+     * Certification info can be obtained from #pj_ssl_sock_info. Currently
+     * it's only implemented for OpenSSL backend.
+     *
+     * @param ssock	The secure socket.
+     * @param is_server	PJ_TRUE to indicate an incoming connection.
+     *
+     * @return		Return PJ_TRUE if verification is successful. 
+     *                  If verification failed, then the connection will be 
+     *			dropped immediately.
+     * 
+     */
+    pj_bool_t (*on_verify_cb)(pj_ssl_sock_t *ssock, pj_bool_t is_server);
 
 } pj_ssl_sock_cb;
 
@@ -1356,7 +1380,7 @@ PJ_DECL(pj_status_t) pj_ssl_sock_sendto(pj_ssl_sock_t *ssock,
  * @param ssock		The secure socket.
  * @param pool		Pool used to allocate some internal data for the
  *			operation.
- * @param localaddr	Local address to bind on.
+ * @param local_addr	Local address to bind on.
  * @param addr_len	Length of buffer containing local address.
  *
  * @return		PJ_SUCCESS if the operation has been successful,
@@ -1377,7 +1401,7 @@ PJ_DECL(pj_status_t) pj_ssl_sock_start_accept(pj_ssl_sock_t *ssock,
  * @param ssock		The secure socket.
  * @param pool		Pool used to allocate some internal data for the
  *			operation.
- * @param localaddr	Local address to bind on.
+ * @param local_addr	Local address to bind on.
  * @param addr_len	Length of buffer containing local address.
  * @param newsock_param	Secure socket parameter for new accepted sockets.
  *

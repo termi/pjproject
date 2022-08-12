@@ -437,6 +437,154 @@ struct OnMediaEventParam
     MediaEvent      ev;
 };
 
+/**
+ * This structure describes authentication challenge used in Proxy-Authenticate
+ * or WWW-Authenticate for digest authentication scheme.
+ */
+struct DigestChallenge
+{
+    /**
+     * Realm for the challenge.
+     * */
+    std::string realm;
+
+    /**
+     * Other parameters.
+     */
+    StringToStringMap otherParam;
+
+    /**
+     * Domain.
+     */
+    std::string domain;
+
+    /**
+     * Nonce challenge.
+     */
+    std::string nonce;
+
+    /**
+     * Opaque value.
+     */
+    std::string opaque;
+
+    /**
+     * Stale parameter.
+     */
+    int  stale;
+
+    /**
+     * Algorithm parameter.
+     */
+    std::string algorithm;
+
+    /**
+     * Quality of protection.
+     */
+    std::string qop;
+
+    /**
+     * Convert from pjsip
+     */
+    void fromPj(const pjsip_digest_challenge &prm);
+
+    /**
+     * Convert to pjsip
+     */
+    pjsip_digest_challenge toPj() const;
+};
+
+/**
+ * This structure describe credential used in Authorization and
+ * Proxy-Authorization header for digest authentication scheme.
+ */
+struct DigestCredential
+{
+    /**
+     *Realm of the credential
+     */
+    std::string realm;
+
+    /**
+     *Other parameters.
+     */
+    StringToStringMap otherParam;
+
+    /**
+     *Username parameter.
+     */
+    std::string username;
+
+    /**
+     *Nonce parameter.
+     */
+    std::string nonce;
+
+    /**
+     *URI parameter.
+     */
+    std::string uri;
+
+    /**
+     *Response digest.
+     */
+    std::string response;
+
+    /**
+     *Algorithm.
+     */
+    std::string algorithm;
+
+    /**
+     *Cnonce.
+     */
+    std::string cnonce;
+
+    /**
+     *Opaque value.
+     */
+    std::string opaque;
+
+    /**
+     *Quality of protection.
+     */
+    std::string qop;
+
+    /**
+     *Nonce count.
+     */
+    std::string nc;
+
+    /**
+     * Convert from pjsip
+     */
+    void fromPj(const pjsip_digest_credential &prm);
+
+    /**
+     * Convert to pjsip
+     */
+    pjsip_digest_credential toPj() const;
+};
+
+
+/**
+ * Parameters for onCredAuth account method.
+ */
+struct OnCredAuthParam
+{
+    /** Digest challenge */
+    DigestChallenge digestChallenge;
+
+    /** Credential info */
+    AuthCredInfo credentialInfo;
+
+    /** Method */
+    std::string method;
+
+    /** Digest credential */
+    DigestCredential digestCredential;
+};
+
 //////////////////////////////////////////////////////////////////////////////
 /**
  * SIP User Agent related settings.
@@ -559,6 +707,26 @@ struct UaConfig : public PersistentObject
      * Default: PJ_TRUE
      */
     bool	    	mwiUnsolicitedEnabled;
+
+    /**
+     * Specify whether to enable UPnP.
+     *
+     * Note that this setting can be further customized in account
+     * configuration (#pjsua_acc_config).
+     *
+     * Default: FALSE
+     */
+    bool        	enableUpnp;
+
+    /**
+     * Specify which interface to use for UPnP. If empty, UPnP will use
+     * the first suitable interface found.
+     *
+     * Note that this setting is only applicable if UPnP is enabled.
+     *
+     * Default: empty string
+     */
+    string         	upnpIfName;
 
 public:
     /**
@@ -779,7 +947,7 @@ public:
     /**
      * Disable VAD?
      *
-     * Default: 0 (no (meaning VAD is enabled))
+     * Default: 0 (codec specific)
      */
     bool		noVad;
 
@@ -839,30 +1007,31 @@ public:
 
     /**
      * Jitter buffer initial prefetch delay in msec. The value must be
-     * between jb_min_pre and jb_max_pre below.
+     * between jb_min_pre and jb_max_pre below. If the value is 0,
+     * prefetching will be disabled.
      *
-     * Default: -1 (to use default stream settings, currently 150 msec)
+     * Default: -1 (to use default stream settings, currently 0)
      */
     int			jbInit;
 
     /**
      * Jitter buffer minimum prefetch delay in msec.
      *
-     * Default: -1 (to use default stream settings, currently 60 msec)
+     * Default: -1 (to use default stream settings, currently codec ptime)
      */
     int			jbMinPre;
 
     /**
      * Jitter buffer maximum prefetch delay in msec.
      *
-     * Default: -1 (to use default stream settings, currently 240 msec)
+     * Default: -1 (to use default stream settings, currently 80% of jbMax)
      */
     int			jbMaxPre;
 
     /**
      * Set maximum delay that can be accomodated by the jitter buffer msec.
      *
-     * Default: -1 (to use default stream settings, currently 360 msec)
+     * Default: -1 (to use default stream settings, currently 500 msec)
      */
     int			jbMax;
 
@@ -1605,9 +1774,7 @@ public:
      *    continue the call by sending re-INVITE
      *    (configurable via \a AccountConfig.ipChangeConfig.reinviteFlags).
      *
-     * @param param	The IP change parameter, have a look at #IpChangeParam.
-     *
-     * @return		PJ_SUCCESS on success, other on error.
+     * @param param	The IP change parameter, have a look at IpChangeParam.
      */
     void handleIpChange(const IpChangeParam &param) PJSUA2_THROW(Error);
 
@@ -1695,6 +1862,39 @@ public:
      */
     virtual void onMediaEvent(OnMediaEventParam &prm)
     { PJ_UNUSED_ARG(prm); }
+
+    /**
+     * Callback for computation of the digest credential.
+     *
+     * Usually, an application does not need to implement (overload) this callback.
+     * Use it, if your application needs to support Digest AKA authentication without 
+     * the default digest computation back-end (i.e: using <b>libmilenage</b>).
+     *
+     * To use Digest AKA authentication, add \a PJSIP_CRED_DATA_EXT_AKA flag in the
+     * AuthCredInfo's \a dataType field of the AccountConfig, and fill up other
+     * AKA specific information in AuthCredInfo:
+     *  - If PJSIP_HAS_DIGEST_AKA_AUTH is disabled, you have to overload this callback
+     *    to provide your own digest computation back-end.
+     *  - If PJSIP_HAS_DIGEST_AKA_AUTH is enabled, <b>libmilenage</b> library from 
+     *    \a third_party directory is linked, and this callback returns PJ_ENOTSUP,
+     *    then the default digest computation back-end is used.
+     *
+     * @param prm.digestChallenge	The authentication challenge sent by server in 401
+     *		    or 401 response, as either Proxy-Authenticate or
+     *		    WWW-Authenticate header.
+     * @param prm.credentialInfo	    The credential to be used.
+     * @param method    The request method.
+     * @param prm.digestCredential	    The digest credential where the digest response
+     *		    will be placed to. Upon calling this function, the
+     *		    nonce, nc, cnonce, qop, uri, and realm fields of
+     *		    this structure must have been set by caller. Upon
+     *		    return, the \a response field will be initialized
+     *		    by this function.
+     *
+     * @return PJ_ENOTSUP is the default. If you overload this callback,
+     *		    return PJ_SUCCESS on success. 
+     */
+    virtual pj_status_t onCredAuth(OnCredAuthParam &prm);
 
 private:
     static Endpoint		*instance_;	// static instance
@@ -1869,6 +2069,15 @@ private:
     on_ip_change_progress(pjsua_ip_change_op op,
 			  pj_status_t status,
 			  const pjsua_ip_change_op_info *info);
+
+    static pj_status_t on_auth_create_aka_response_callback(
+					     pj_pool_t *pool,
+					     const pjsip_digest_challenge*chal,
+					     const pjsip_cred_info *cred,
+					     const pj_str_t *method,
+					     pjsip_digest_credential *auth);
+    friend class Account;
+
 
 private:
     void clearCodecInfoList(CodecInfoVector &codec_list);

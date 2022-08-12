@@ -111,12 +111,14 @@ struct pjmedia_vid_port
     pjmedia_frame           *frm_buf;
     pj_size_t                frm_buf_size;
     pj_mutex_t              *frm_mutex;
+    pj_size_t		     src_size;
 };
 
 struct vid_pasv_port
 {
     pjmedia_port	 base;
     pjmedia_vid_port	*vp;
+    pj_bool_t            is_destroying;
 };
 
 struct fmt_prop 
@@ -145,6 +147,8 @@ static pj_status_t vid_pasv_port_put_frame(struct pjmedia_port *this_port,
 
 static pj_status_t vid_pasv_port_get_frame(struct pjmedia_port *this_port,
 					   pjmedia_frame *frame);
+
+static pj_status_t vid_pasv_port_on_destroy(struct pjmedia_port *this_port);
 
 
 PJ_DEF(void) pjmedia_vid_port_param_default(pjmedia_vid_port_param *prm)
@@ -184,6 +188,12 @@ static pj_status_t get_vfi(const pjmedia_format *fmt,
 
 static pj_status_t create_converter(pjmedia_vid_port *vp)
 {
+    pj_status_t status;
+    pjmedia_video_apply_fmt_param vafp;
+
+    status = get_vfi(&vp->conv.conv_param.src, NULL, &vafp);
+    vp->src_size = vafp.framebytes;
+
     if (vp->conv.conv) {
         pjmedia_converter_destroy(vp->conv.conv);
 	vp->conv.conv = NULL;
@@ -196,8 +206,6 @@ static pj_status_t create_converter(pjmedia_vid_port *vp)
 	(vp->conv.conv_param.src.det.vid.size.h !=
          vp->conv.conv_param.dst.det.vid.size.h))
     {
-	pj_status_t status;
-
 	/* Yes, we need converter */
 	status = pjmedia_converter_create(NULL, vp->pool, &vp->conv.conv_param,
 					  &vp->conv.conv);
@@ -210,9 +218,6 @@ static pj_status_t create_converter(pjmedia_vid_port *vp)
     if (vp->conv.conv ||
         (vp->role==ROLE_ACTIVE && (vp->dir & PJMEDIA_DIR_ENCODING)))
     {
-	pj_status_t status;
-	pjmedia_video_apply_fmt_param vafp;
-
 	/* Allocate buffer for conversion */
 	status = get_vfi(&vp->conv.conv_param.dst, NULL, &vafp);
 	if (status != PJ_SUCCESS)
@@ -523,8 +528,9 @@ PJ_DEF(pj_status_t) pjmedia_vid_port_create( pj_pool_t *pool,
         return status;
 
     /* Allocate videoport */
+    pool = pj_pool_create(pool->factory, "video port", 500, 500, NULL);
     vp = PJ_POOL_ZALLOC_T(pool, pjmedia_vid_port);
-    vp->pool = pj_pool_create(pool->factory, "video port", 500, 500, NULL);
+    vp->pool = pool;
     vp->role = prm->active ? ROLE_ACTIVE : ROLE_PASSIVE;
     vp->dir = prm->vidparam.dir;
 //    vp->cap_size = vfd->size;
@@ -650,6 +656,7 @@ PJ_DEF(pj_status_t) pjmedia_vid_port_create( pj_pool_t *pool,
 	    pp->base.get_frame = &vid_pasv_port_get_frame;
 	if (prm->vidparam.dir & PJMEDIA_DIR_RENDER)
 	    pp->base.put_frame = &vid_pasv_port_put_frame;
+	pp->base.on_destroy = &vid_pasv_port_on_destroy;
 	pjmedia_port_info_init2(&pp->base.info, &vp->dev_name,
 	                        PJMEDIA_SIG_VID_PORT,
 			        prm->vidparam.dir, &prm->vidparam.fmt);
@@ -669,6 +676,15 @@ PJ_DEF(pj_status_t) pjmedia_vid_port_create( pj_pool_t *pool,
         vp->frm_buf->buf = pj_pool_zalloc(pool, vafp.framebytes);
         vp->frm_buf->size = vp->frm_buf_size;
         vp->frm_buf->type = PJMEDIA_FRAME_TYPE_NONE;
+
+	/* Initialize buffer with black color */
+	status = pjmedia_video_format_fill_black(&vp->conv.conv_param.src,
+						 vp->frm_buf->buf,
+						 vp->frm_buf_size);
+	if (status != PJ_SUCCESS) {
+	    PJ_PERROR(4,(THIS_FILE, status,
+			 "Warning: failed to init buffer with black"));
+	}
 
         status = pj_mutex_create_simple(pool, vp->dev_name.ptr,
                                         &vp->frm_mutex);
@@ -742,6 +758,18 @@ PJ_DEF(pj_status_t) pjmedia_vid_port_subscribe_event(
     return pjmedia_event_subscribe(NULL, &client_port_event_cb, vp, port);
 }
 
+
+PJ_DEF(pj_status_t) pjmedia_vid_port_unsubscribe_event(
+						pjmedia_vid_port *vp,
+						pjmedia_port *port)
+{
+    PJ_ASSERT_RETURN(vp && port, PJ_EINVAL);
+
+    /* Unsubscribe to port's events */
+    return pjmedia_event_unsubscribe(NULL, &client_port_event_cb, vp, port);
+}
+
+
 PJ_DEF(pj_status_t) pjmedia_vid_port_connect(pjmedia_vid_port *vp,
 					      pjmedia_port *port,
 					      pj_bool_t destroy)
@@ -783,39 +811,18 @@ PJ_DEF(pj_status_t) pjmedia_vid_port_start(pjmedia_vid_port *vp)
 
     PJ_ASSERT_RETURN(vp, PJ_EINVAL);
 
+    /* Initialize buffer with black color */
+    status = pjmedia_video_format_fill_black(&vp->conv.conv_param.src,
+					     vp->frm_buf->buf,
+					     vp->frm_buf_size);
+    if (status != PJ_SUCCESS) {
+        PJ_PERROR(4,(THIS_FILE, status,
+		     "Warning: failed to init buffer with black"));
+    }
+
     status = pjmedia_vid_dev_stream_start(vp->strm);
     if (status != PJ_SUCCESS)
 	goto on_error;
-
-    /* Initialize buffer with black color */
-    {
-        const pjmedia_video_format_info *vfi;
-        const pjmedia_format *fmt;
-	pjmedia_video_apply_fmt_param vafp;
-	pjmedia_frame frame;
-
-	pj_bzero(&frame, sizeof(pjmedia_frame));
-	frame.buf = vp->frm_buf->buf;
-	frame.size = vp->frm_buf_size;
-
-	fmt = &vp->conv.conv_param.src;
-	status = get_vfi(fmt, &vfi, &vafp);
-	if (status == PJ_SUCCESS && frame.buf) {
-	    frame.type = PJMEDIA_FRAME_TYPE_VIDEO;
-	    pj_assert(frame.size >= vafp.framebytes);
-	    frame.size = vafp.framebytes;
-	    
-	    if (vfi->color_model == PJMEDIA_COLOR_MODEL_RGB) {
-	    	pj_memset(frame.buf, 0, vafp.framebytes);
-	    } else if (fmt->id == PJMEDIA_FORMAT_I420 ||
-	  	       fmt->id == PJMEDIA_FORMAT_YV12)
-	    {	    	
-	    	pj_memset(frame.buf, 16, vafp.plane_bytes[0]);
-	    	pj_memset((pj_uint8_t*)frame.buf + vafp.plane_bytes[0],
-		      	  0x80, vafp.plane_bytes[1] * 2);
-	    }
-        }
-    }
 
     if (vp->clock) {
 	status = pjmedia_clock_start(vp->clock);
@@ -850,11 +857,11 @@ PJ_DEF(pj_status_t) pjmedia_vid_port_stop(pjmedia_vid_port *vp)
     return status;
 }
 
-PJ_DEF(void) pjmedia_vid_port_destroy(pjmedia_vid_port *vp)
+static void vid_port_destroy(pjmedia_vid_port *vp)
 {
     PJ_ASSERT_ON_FAIL(vp, return);
 
-    PJ_LOG(4,(THIS_FILE, "Closing %s..", vp->dev_name.ptr));
+    PJ_LOG(4,(THIS_FILE, "Destroying %s..", vp->dev_name.ptr));
 
     /* Unsubscribe events first, otherwise the event callbacks can be called
      * and try to access already destroyed objects.
@@ -889,6 +896,22 @@ PJ_DEF(void) pjmedia_vid_port_destroy(pjmedia_vid_port *vp)
         vp->conv.conv = NULL;
     }
     pj_pool_release(vp->pool);
+}
+
+PJ_DEF(void) pjmedia_vid_port_destroy(pjmedia_vid_port *vp)
+{
+    PJ_ASSERT_ON_FAIL(vp, return);
+
+    PJ_LOG(4,(THIS_FILE, "Destroy request on %s..", vp->dev_name.ptr));
+
+    /* This is a passive port, destroy via PJMEDIA port API */
+    if (vp->pasv_port) {
+	vp->pasv_port->is_destroying = PJ_TRUE;
+	pjmedia_port_destroy(&vp->pasv_port->base);
+	return;
+    }
+
+    vid_port_destroy(vp);
 }
 
 /*
@@ -1334,12 +1357,29 @@ static pj_status_t vid_pasv_port_put_frame(struct pjmedia_port *this_port,
     struct vid_pasv_port *vpp = (struct vid_pasv_port*)this_port;
     pjmedia_vid_port *vp = vpp->vp;
 
+    if (vp->pasv_port->is_destroying)
+	return PJ_EGONE;
+
     if (vp->stream_role==ROLE_PASSIVE) {
         /* We are passive and the stream is passive.
          * The encoding counterpart is in vid_pasv_port_get_frame().
          */
         pj_status_t status;
         pjmedia_frame frame_;
+
+	if (frame->size != vp->src_size) {
+    	    if (frame->size > 0) {
+    	    	PJ_LOG(4, (THIS_FILE, "Unexpected frame size %d, expected %d",
+    			      	      frame->size, vp->src_size));
+    	    }
+
+    	    pj_memcpy(&frame_, frame, sizeof(pjmedia_frame));
+    	    frame_.buf = NULL;
+    	    frame_.size = 0;
+
+    	    /* Send heart beat for updating timestamp or keep-alive. */
+	    return pjmedia_vid_dev_stream_put_frame(vp->strm, &frame_);
+	}
         
         pj_bzero(&frame_, sizeof(frame_));
         status = convert_frame(vp, frame, &frame_);
@@ -1353,7 +1393,8 @@ static pj_status_t vid_pasv_port_put_frame(struct pjmedia_port *this_port,
          * frame in the buffer.
          * The encoding counterpart is located in vidstream_cap_cb()
          */
-        copy_frame_to_buffer(vp, frame);
+    	if (frame->size == vp->src_size)
+            copy_frame_to_buffer(vp, frame);
     }
 
     return PJ_SUCCESS;
@@ -1365,6 +1406,9 @@ static pj_status_t vid_pasv_port_get_frame(struct pjmedia_port *this_port,
     struct vid_pasv_port *vpp = (struct vid_pasv_port*)this_port;
     pjmedia_vid_port *vp = vpp->vp;
     pj_status_t status = PJ_SUCCESS;
+
+    if (vp->pasv_port->is_destroying)
+	return PJ_EGONE;
 
     if (vp->stream_role==ROLE_PASSIVE) {
         /* We are passive and the stream is passive.
@@ -1389,6 +1433,14 @@ static pj_status_t vid_pasv_port_get_frame(struct pjmedia_port *this_port,
     }
 
     return status;
+}
+
+
+static pj_status_t vid_pasv_port_on_destroy(struct pjmedia_port *this_port)
+{
+    struct vid_pasv_port *vpp = (struct vid_pasv_port*)this_port;
+    vid_port_destroy(vpp->vp);
+    return PJ_SUCCESS;
 }
 
 

@@ -42,6 +42,7 @@ static const pj_str_t STR_SDP_NAME = { "pjmedia", 7 };
 static const pj_str_t STR_SENDRECV = { "sendrecv", 8 };
 static const pj_str_t STR_SENDONLY = { "sendonly", 8 };
 static const pj_str_t STR_RECVONLY = { "recvonly", 8 };
+static const pj_str_t STR_INACTIVE = { "inactive", 8 };
 
 
 /* Config to control rtpmap inclusion for static payload types */
@@ -344,7 +345,7 @@ static int PJ_THREAD_FUNC worker_proc(void *arg)
     pjmedia_endpt *endpt = (pjmedia_endpt*) arg;
 
     while (!endpt->quit_flag) {
-	pj_time_val timeout = { 0, 500 };
+	pj_time_val timeout = { 0, 10 };
 	pj_ioqueue_poll(endpt->ioqueue, &timeout);
     }
 
@@ -405,17 +406,20 @@ static pj_status_t init_sdp_media(pjmedia_sdp_media *m,
     }
 #endif
 
-    /* Add sendrecv attribute. */
-    attr = PJ_POOL_ZALLOC_T(pool, pjmedia_sdp_attr);
-    if (dir == PJMEDIA_DIR_ENCODING) {
-    	attr->name = STR_SENDONLY;
-    } else if (dir == PJMEDIA_DIR_DECODING) {
-    	attr->name = STR_RECVONLY;
-    } else {
-    	attr->name = STR_SENDRECV;
+    /* Add direction attribute. */
+    if (m->desc.port != 0) {
+	attr = PJ_POOL_ZALLOC_T(pool, pjmedia_sdp_attr);
+	if (dir == PJMEDIA_DIR_ENCODING) {
+	    attr->name = STR_SENDONLY;
+	} else if (dir == PJMEDIA_DIR_DECODING) {
+	    attr->name = STR_RECVONLY;
+	} else if (dir == PJMEDIA_DIR_NONE) {
+	    attr->name = STR_INACTIVE;
+	} else {
+	    attr->name = STR_SENDRECV;
+	}
+	m->attr[m->attr_count++] = attr;
     }
-
-    m->attr[m->attr_count++] = attr;
 
     return PJ_SUCCESS;
 }
@@ -695,7 +699,8 @@ pjmedia_endpt_create_audio_sdp(pjmedia_endpt *endpt,
 	    attr->name = pj_str("rtpmap");
 	    pj_ansi_snprintf(buf, sizeof(buf), "%d telephone-event/%d",
 			     pt, televent_clockrates[i]);
-	    attr->value = pj_strdup3(pool, buf);
+	    /* Must be NULL terminated for pjmedia_sdp_attr_get_rtpmap() */
+	    pj_strdup2_with_null(pool, &attr->value, buf);
 	    m->attr[m->attr_count++] = attr;
 
 	    /* Add fmtp */

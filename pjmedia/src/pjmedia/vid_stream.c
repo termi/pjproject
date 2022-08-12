@@ -107,6 +107,7 @@ struct pjmedia_vid_stream
     pjmedia_endpt	    *endpt;	    /**< Media endpoint.	    */
     pjmedia_vid_codec_mgr   *codec_mgr;	    /**< Codec manager.		    */
     pjmedia_vid_stream_info  info;	    /**< Stream info.		    */
+    pj_grp_lock_t	    *grp_lock;	    /**< Stream lock.		    */
 
     pjmedia_vid_channel	    *enc;	    /**< Encoding channel.	    */
     pjmedia_vid_channel	    *dec;	    /**< Decoding channel.	    */
@@ -118,7 +119,6 @@ struct pjmedia_vid_stream
 
     pjmedia_transport	    *transport;	    /**< Stream transport.	    */
 
-    pj_mutex_t		    *jb_mutex;
     pjmedia_jbuf	    *jb;	    /**< Jitter buffer.		    */
     char		     jb_last_frm;   /**< Last frame type from jb    */
     unsigned		     jb_last_frm_cnt;/**< Last JB frame type counter*/
@@ -137,6 +137,7 @@ struct pjmedia_vid_stream
     pjmedia_ratio	     dec_max_fps;   /**< Max fps of decoding dir.   */
     pjmedia_frame            dec_frame;	    /**< Current decoded frame.     */
     unsigned		     dec_delay_cnt; /**< Decoding delay (in frames).*/
+    unsigned		     dec_max_delay; /**< Decoding max delay (in ts).*/
     pjmedia_event            fmt_event;	    /**< Buffered fmt_changed event
                                                  to avoid deadlock	    */
     pjmedia_event            miss_keyframe_event;
@@ -162,7 +163,9 @@ struct pjmedia_vid_stream
     pj_bool_t		     use_ka;	       /**< Stream keep-alive with non-
 						    codec-VAD mechanism is
 						    enabled?		    */
-    pj_timestamp	     last_frm_ts_sent; /**< Timestamp of last sending
+    unsigned	             ka_interval;      /**< The keepalive sending 
+					            interval                */
+    pj_time_val	             last_frm_ts_sent; /**< Time of last sending
 					            packet		    */
     unsigned	             start_ka_count;   /**< The number of keep-alive
                                                     to be sent after it is
@@ -231,6 +234,9 @@ static pj_status_t send_rtcp(pjmedia_vid_stream *stream,
 static void on_rx_rtcp( void *data,
                         void *pkt,
                         pj_ssize_t bytes_read);
+
+static void on_destroy(void *arg);
+
 
 #if TRACE_JB
 
@@ -388,7 +394,7 @@ static void dump_port_info(const pjmedia_vid_channel *chan,
     const pjmedia_port_info *pi = &chan->port.info;
     char fourcc_name[5];
 
-    PJ_LOG(5, (pi->name.ptr,
+    PJ_LOG(4, (pi->name.ptr,
 	       " %s format %s: %dx%d %s%s %d/%d(~%d)fps",
 	       (chan->dir==PJMEDIA_DIR_DECODING? "Decoding":"Encoding"),
 	       event_name,
@@ -413,7 +419,7 @@ static pj_status_t stream_event_cb(pjmedia_event *event,
 	case PJMEDIA_EVENT_FMT_CHANGED:
 	    /* Copy the event to avoid deadlock if we publish the event
 	     * now. This happens because fmt_event may trigger restart
-	     * while we're still holding the jb_mutex.
+	     * while we're still holding the stream lock.
 	     */
 	    pj_memcpy(&stream->fmt_event, event, sizeof(*event));
 	    return PJ_SUCCESS;
@@ -513,6 +519,9 @@ static void send_keep_alive_packet(pjmedia_vid_stream *stream)
     pj_status_t status;
     void *pkt;
     int pkt_len;
+
+    if (!stream->transport)
+	return;
 
     TRC_((channel->port.info.name.ptr,
 	  "Sending keep-alive (RTCP and empty RTP)"));
@@ -757,6 +766,7 @@ static void on_rx_rtp( pjmedia_tp_cb_param *param)
     unsigned payloadlen;
     pjmedia_rtp_status seq_st;
     pj_status_t status;
+    long ts_diff;
     pj_bool_t pkt_discarded = PJ_FALSE;
 
     /* Check for errors */
@@ -803,7 +813,13 @@ static void on_rx_rtp( pjmedia_tp_cb_param *param)
     /* Update RTP session (also checks if RTP session can accept
      * the incoming packet.
      */
-    pjmedia_rtp_session_update2(&channel->rtp, hdr, &seq_st, PJ_TRUE);
+    pjmedia_rtp_session_update2(&channel->rtp, hdr, &seq_st,
+				PJMEDIA_VID_STREAM_CHECK_RTP_PT);
+#if !PJMEDIA_VID_STREAM_CHECK_RTP_PT
+    if (hdr->pt != channel->rtp.out_pt) {
+	seq_st.status.flag.badpt = 1;
+    }
+#endif
     if (seq_st.status.value) {
 	TRC_  ((channel->port.info.name.ptr,
 		"RTP status: badpt=%d, badssrc=%d, dup=%d, "
@@ -899,12 +915,13 @@ static void on_rx_rtp( pjmedia_tp_cb_param *param)
 	}
     }
 
-    pj_mutex_lock( stream->jb_mutex );
+    pj_grp_lock_acquire( stream->grp_lock );
 
     /* Quickly see if there may be a full picture in the jitter buffer, and
      * decode them if so. More thorough check will be done in decode_frame().
      */
-    if ((pj_ntohl(hdr->ts) != stream->dec_frame.timestamp.u32.lo) || hdr->m) {
+    ts_diff = pj_ntohl(hdr->ts) - stream->dec_frame.timestamp.u32.lo;
+    if (ts_diff != 0 || hdr->m) {
 	if (PJMEDIA_VID_STREAM_SKIP_PACKETS_TO_REDUCE_LATENCY) {
 	    /* Always decode whenever we have picture in jb and
 	     * overwrite already decoded picture if necessary
@@ -926,6 +943,17 @@ static void on_rx_rtp( pjmedia_tp_cb_param *param)
 	    }
 	    else if (stream->dec_frame.size == 0) {
 		can_decode = PJ_TRUE;
+	    }
+	    /* For video, checking for a full jbuf above is not very useful
+	     * since video jbuf has a rather large capacity (to accommodate
+	     * many chunks per frame) and thus can typically store frames
+	     * that are much longer than max latency/delay specified in jb_max
+	     * setting.
+	     * So we need to compare the last decoded frame's timestamp with
+	     * the current timestamp.
+	     */
+	    else if (ts_diff > (long)stream->dec_max_delay) {
+	    	can_decode = PJ_TRUE;
 	    }
 
 	    if (can_decode) {
@@ -953,7 +981,7 @@ static void on_rx_rtp( pjmedia_tp_cb_param *param)
 #endif
 
     }
-    pj_mutex_unlock( stream->jb_mutex );
+    pj_grp_lock_release( stream->grp_lock );
 
     /* Check if we need to send RTCP-FB generic NACK */
     if (stream->send_rtcp_fb_nack && seq_st.diff > 1 &&
@@ -1061,19 +1089,22 @@ static pj_status_t put_frame(pjmedia_port *port,
     if (stream->use_ka)
     {
         pj_uint32_t dtx_duration, ka_interval;
+	pj_time_val tm_now, tmp;
 
-        dtx_duration = pj_timestamp_diff32(&stream->last_frm_ts_sent,
-                                           &frame->timestamp);
+	pj_gettimeofday(&tm_now);
+
+	tmp = tm_now;
+	PJ_TIME_VAL_SUB(tmp, stream->last_frm_ts_sent);
+	dtx_duration = PJ_TIME_VAL_MSEC(tmp);
+
         if (stream->start_ka_count) {
-            ka_interval = stream->start_ka_interval *
-                                     stream->info.codec_info.clock_rate / 1000;
+	    ka_interval = stream->start_ka_interval;
         }  else {
-            ka_interval = PJMEDIA_STREAM_KA_INTERVAL *
-                                            stream->info.codec_info.clock_rate;
+            ka_interval = stream->ka_interval * 1000;
         }
         if (dtx_duration > ka_interval) {
             send_keep_alive_packet(stream);
-            stream->last_frm_ts_sent = frame->timestamp;
+            stream->last_frm_ts_sent = tm_now;
 
             if (stream->start_ka_count)
                 stream->start_ka_count--;
@@ -1179,7 +1210,7 @@ static pj_status_t put_frame(pjmedia_port *port,
 	/* When the payload length is zero, we should not send anything,
 	 * but proceed the rest normally.
 	 */
-	if (frame_out.size != 0) {
+	if (frame_out.size != 0 && stream->transport) {
 	    /* Copy RTP header to the beginning of packet */
 	    pj_memcpy(channel->buf, rtphdr, sizeof(pjmedia_rtp_hdr));
 
@@ -1270,7 +1301,7 @@ static pj_status_t put_frame(pjmedia_port *port,
      * We only do this when stream direction is not "decoding only", because
      * when it is, check_tx_rtcp() will be handled by get_frame().
      */
-    if (stream->dir != PJMEDIA_DIR_DECODING) {
+    if (stream->dir != PJMEDIA_DIR_DECODING && stream->transport) {
 	check_tx_rtcp(stream);
     }
 
@@ -1288,8 +1319,8 @@ static pj_status_t put_frame(pjmedia_port *port,
     }
 
 #if defined(PJMEDIA_STREAM_ENABLE_KA) && PJMEDIA_STREAM_ENABLE_KA!=0
-    /* Update timestamp of last sending packet. */
-    stream->last_frm_ts_sent = frame->timestamp;
+    /* Update time of last sending packet. */
+    pj_gettimeofday(&stream->last_frm_ts_sent);
 #endif
 
     return PJ_SUCCESS;
@@ -1518,7 +1549,7 @@ static pj_status_t get_frame(pjmedia_port *port,
     }
 
     /* Report pending events. Do not publish the event while holding the
-     * jb_mutex as that would lead to deadlock. It should be safe to
+     * stream lock as that would lead to deadlock. It should be safe to
      * operate on fmt_event without the mutex because format change normally
      * would only occur once during the start of the media.
      */
@@ -1562,7 +1593,7 @@ static pj_status_t get_frame(pjmedia_port *port,
 	stream->miss_keyframe_event.type = PJMEDIA_EVENT_NONE;
     }
 
-    pj_mutex_lock( stream->jb_mutex );
+    pj_grp_lock_acquire( stream->grp_lock );
 
     if (stream->dec_frame.size == 0) {
 	/* Don't have frame in buffer, try to decode one */
@@ -1588,7 +1619,7 @@ static pj_status_t get_frame(pjmedia_port *port,
 	stream->dec_frame.size = 0;
     }
 
-    pj_mutex_unlock( stream->jb_mutex );
+    pj_grp_lock_release( stream->grp_lock );
 
     return PJ_SUCCESS;
 }
@@ -1679,9 +1710,10 @@ static pj_status_t create_channel( pj_pool_t *pool,
 	pi->fmt.id = info->codec_param->dec_fmt.id;
 	channel->port.put_frame = &put_frame;
     }
-
-    /* Init port. */
     channel->port.port_data.pdata = stream;
+
+    /* Use stream group lock */
+    channel->port.grp_lock = stream->grp_lock;
 
     PJ_LOG(5, (name.ptr,
 	       "%s channel created %dx%d %s%s%.*s %d/%d(~%d)fps",
@@ -1788,8 +1820,9 @@ PJ_DEF(pj_status_t) pjmedia_vid_stream_create(
 
 #if defined(PJMEDIA_STREAM_ENABLE_KA) && PJMEDIA_STREAM_ENABLE_KA!=0
     stream->use_ka = info->use_ka;
+    stream->ka_interval = info->ka_cfg.ka_interval;
     stream->start_ka_count = info->ka_cfg.start_count;
-    stream->start_ka_interval = info->ka_cfg.start_interval;
+    stream->start_ka_interval = info->ka_cfg.start_interval;    
 #endif
     stream->num_keyframe = info->sk_cfg.count;
 
@@ -1806,9 +1839,15 @@ PJ_DEF(pj_status_t) pjmedia_vid_stream_create(
     	stream->cname.slen = p - stream->cname.ptr;
     }
 
-    /* Create mutex to protect jitter buffer: */
+    /* Create group lock */
+    status = pj_grp_lock_create_w_handler(pool, NULL, stream, 
+					  &on_destroy,
+					  &stream->grp_lock);
+    if (status != PJ_SUCCESS)
+	goto err_cleanup;
 
-    status = pj_mutex_create_simple(pool, NULL, &stream->jb_mutex);
+    /* Add ref count of group lock */
+    status = pj_grp_lock_add_ref(stream->grp_lock);
     if (status != PJ_SUCCESS)
 	goto err_cleanup;
 
@@ -1890,16 +1929,20 @@ PJ_DEF(pj_status_t) pjmedia_vid_stream_create(
     stream->dec_frame.buf = pj_pool_alloc(pool, stream->dec_max_size);
 
     /* Init jitter buffer parameters: */
-    frm_ptime	    = 1000 * vfd_enc->fps.denum / vfd_enc->fps.num;
+    frm_ptime	    = 1000 * vfd_dec->fps.denum / vfd_dec->fps.num;
     chunks_per_frm  = stream->frame_size / PJMEDIA_MAX_MRU;
     if (chunks_per_frm < MIN_CHUNKS_PER_FRM)
 	chunks_per_frm = MIN_CHUNKS_PER_FRM;
 
     /* JB max count, default 500ms */
-    if (info->jb_max >= frm_ptime)
+    if (info->jb_max >= frm_ptime) {
 	jb_max	    = info->jb_max * chunks_per_frm / frm_ptime;
-    else
+	stream->dec_max_delay = info->codec_info.clock_rate * info->jb_max /
+				1000;
+    } else {
 	jb_max	    = 500 * chunks_per_frm / frm_ptime;
+	stream->dec_max_delay = info->codec_info.clock_rate * 500 / 1000;
+    }
 
     /* JB min prefetch, default 1 frame */
     if (info->jb_min_pre >= frm_ptime)
@@ -2110,6 +2153,14 @@ PJ_DEF(pj_status_t) pjmedia_vid_stream_destroy( pjmedia_vid_stream *stream )
 {
     PJ_ASSERT_RETURN(stream != NULL, PJ_EINVAL);
 
+    PJ_LOG(4,(THIS_FILE, "Destroy request on %s..", stream->name.ptr));
+
+    /* Stop the streaming */
+    if (stream->enc)
+	stream->enc->port.put_frame = NULL;
+    if (stream->dec)
+	stream->dec->port.get_frame = NULL;
+
 #if TRACE_RC
     {
 	unsigned total_time;
@@ -2123,7 +2174,11 @@ PJ_DEF(pj_status_t) pjmedia_vid_stream_destroy( pjmedia_vid_stream *stream )
     }
 #endif
 
-    /* Unsubscribe events from RTCP */
+    /* Unsubscribe from events */
+    if (stream->codec) {
+        pjmedia_event_unsubscribe(NULL, &stream_event_cb, stream,
+                                  stream->codec);
+    }
     pjmedia_event_unsubscribe(NULL, &stream_event_cb, stream, &stream->rtcp);
 
     /* Send RTCP BYE (also SDES) */
@@ -2140,26 +2195,38 @@ PJ_DEF(pj_status_t) pjmedia_vid_stream_destroy( pjmedia_vid_stream *stream )
 	stream->transport = NULL;
     }
 
-    /* This function may be called when stream is partly initialized. */
-    if (stream->jb_mutex)
-	pj_mutex_lock(stream->jb_mutex);
+    /* This function may be called when stream is partly initialized,
+     * i.e: group lock may not be created yet.
+     */
+    if (stream->grp_lock) {
+	return pj_grp_lock_dec_ref(stream->grp_lock);
+    } else {
+	on_destroy(stream);
+    }
 
+    return PJ_SUCCESS;
+}
+
+
+/*
+ * Destroy stream.
+ */
+static void on_destroy( void *arg )
+{
+    pjmedia_vid_stream *stream = (pjmedia_vid_stream*)arg;
+    pj_assert(stream);
+
+    PJ_LOG(4,(THIS_FILE, "Destroying %s..", stream->name.ptr));
 
     /* Free codec. */
     if (stream->codec) {
-        pjmedia_event_unsubscribe(NULL, &stream_event_cb, stream,
-                                  stream->codec);
 	pjmedia_vid_codec_close(stream->codec);
 	pjmedia_vid_codec_mgr_dealloc_codec(stream->codec_mgr, stream->codec);
 	stream->codec = NULL;
     }
 
     /* Free mutex */
-
-    if (stream->jb_mutex) {
-	pj_mutex_destroy(stream->jb_mutex);
-	stream->jb_mutex = NULL;
-    }
+    stream->grp_lock = NULL;
 
     /* Destroy jitter buffer */
     if (stream->jb) {
@@ -2175,8 +2242,6 @@ PJ_DEF(pj_status_t) pjmedia_vid_stream_destroy( pjmedia_vid_stream *stream )
 #endif
 
     pj_pool_safe_release(&stream->own_pool);
-
-    return PJ_SUCCESS;
 }
 
 
@@ -2327,9 +2392,9 @@ PJ_DEF(pj_status_t) pjmedia_vid_stream_pause(pjmedia_vid_stream *stream,
 	stream->dec->paused = 1;
 
 	/* Also reset jitter buffer */
-	pj_mutex_lock( stream->jb_mutex );
+	pj_grp_lock_acquire( stream->grp_lock );
 	pjmedia_jbuf_reset(stream->jb);
-	pj_mutex_unlock( stream->jb_mutex );
+	pj_grp_lock_release( stream->grp_lock );
 
 	PJ_LOG(4,(stream->dec->port.info.name.ptr, "Decoder stream paused"));
     }

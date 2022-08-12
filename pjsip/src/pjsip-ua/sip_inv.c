@@ -118,6 +118,8 @@ static pj_status_t handle_timer_response(pjsip_inv_session *inv,
 static pj_bool_t inv_check_secure_dlg(pjsip_inv_session *inv,
 				      pjsip_event *e);
 
+static int print_sdp(pjsip_msg_body *body, char *buf, pj_size_t len);
+
 static void (*inv_state_handler[])( pjsip_inv_session *inv, pjsip_event *e) = 
 {
     &inv_on_state_null,
@@ -266,7 +268,7 @@ static void inv_set_state(pjsip_inv_session *inv, pjsip_inv_state state,
 
     /* Prevent STATE_CALLING from being reported more than once because
      * of authentication
-     * https://trac.pjsip.org/repos/ticket/1318
+     * https://github.com/pjsip/pjproject/issues/1318
      */
     if (state==PJSIP_INV_STATE_CALLING && 
 	(inv->cb_called & (1 << PJSIP_INV_STATE_CALLING)) != 0)
@@ -422,7 +424,7 @@ static const pjmedia_sdp_session *inv_has_pending_answer(pjsip_inv_session *inv,
 }
 
 /* Process pending disconnection
- *  http://trac.pjsip.org/repos/ticket/1712
+ *  https://github.com/pjsip/pjproject/issues/1712
  */
 static void inv_perform_pending_bye(pjsip_inv_session *inv)
 {
@@ -460,7 +462,7 @@ static pj_status_t inv_send_ack(pjsip_inv_session *inv, pjsip_event *e)
 	return PJ_EBUG;
     }
 
-    /* Note that with https://trac.pjsip.org/repos/ticket/1725, this
+    /* Note that with https://github.com/pjsip/pjproject/issues/1725, this
      * function can be called to send ACK for previous INVITE 200/OK
      * retransmission
      */
@@ -581,7 +583,7 @@ static pj_bool_t mod_inv_on_rx_request(pjsip_rx_data *rdata)
 	}
 
 	/* Ignore ACK with different CSeq
-	 * https://trac.pjsip.org/repos/ticket/1391
+	 * https://github.com/pjsip/pjproject/issues/1391
 	 */
 	if (rdata->msg_info.cseq->cseq != inv->invite_tsx->cseq) {
 	    return PJ_TRUE;
@@ -592,7 +594,7 @@ static pj_bool_t mod_inv_on_rx_request(pjsip_rx_data *rdata)
 	    /* Before we terminate INVITE transaction, process the SDP
 	     * in the ACK request, if any. 
 	     * Only do this when invite state is not already disconnected
-	     * (http://trac.pjsip.org/repos/ticket/640).
+	     * (https://github.com/pjsip/pjproject/issues/640).
 	     */
 	    if (inv->state < PJSIP_INV_STATE_DISCONNECTED) {
 		inv_check_sdp_in_incoming_msg(inv, inv->invite_tsx, rdata);
@@ -630,7 +632,7 @@ static pj_bool_t mod_inv_on_rx_request(pjsip_rx_data *rdata)
 	    inv_set_state(inv, PJSIP_INV_STATE_CONFIRMED, &event);
 
 	    /* Send pending BYE if any:
-	     *   http://trac.pjsip.org/repos/ticket/1712
+	     *   https://github.com/pjsip/pjproject/issues/1712
 	     * Do this after setting the state to CONFIRMED, so that we
 	     * have consistent CONFIRMED state between caller and callee.
 	     */
@@ -700,9 +702,9 @@ static pj_bool_t mod_inv_on_rx_response(pjsip_rx_data *rdata)
 	 * retransmission is received. Also handle the situation
 	 * when we have another re-INVITE on going and 200/OK
 	 * retransmission is received. See:
-	 * https://trac.pjsip.org/repos/ticket/1725.
+	 * https://github.com/pjsip/pjproject/issues/1725.
 	 * Also send ACK for 200/OK of pending re-INVITE after call is
-	 * disconnected (see https://trac.pjsip.org/repos/ticket/1755).
+	 * disconnected (see https://github.com/pjsip/pjproject/issues/1755).
 	 */
 	if (inv->invite_tsx == NULL ||
 	    inv->state == PJSIP_INV_STATE_DISCONNECTED ||
@@ -768,7 +770,7 @@ static void mod_inv_on_tsx_state(pjsip_transaction *tsx, pjsip_event *e)
     /* Clear invite transaction when tsx is confirmed.
      * Previously we set invite_tsx to NULL only when transaction has
      * terminated, but this didn't work when ACK has the same Via branch
-     * value as the INVITE (see http://www.pjsip.org/trac/ticket/113)
+     * value as the INVITE (see https://github.com/pjsip/pjproject/issues/113)
      */
     if (tsx->state>=PJSIP_TSX_STATE_CONFIRMED && tsx == inv->invite_tsx) {	
 	inv->invite_tsx = NULL;
@@ -965,79 +967,170 @@ PJ_DEF(pj_status_t) pjsip_inv_create_uac( pjsip_dialog *dlg,
     return PJ_SUCCESS;
 }
 
+PJ_DEF(pjsip_sdp_info*) pjsip_get_sdp_info(pj_pool_t *pool,
+                                           pjsip_msg_body *body,
+                                           pjsip_media_type *msg_media_type,
+                                           const pjsip_media_type *search_media_type)
+{
+    pjsip_sdp_info *sdp_info;
+    pjsip_media_type search_type;
+    pjsip_media_type multipart_mixed;
+    pjsip_media_type multipart_alternative;
+    pjsip_media_type *msg_type;
+    pj_status_t status;
+
+    sdp_info = PJ_POOL_ZALLOC_T(pool,
+                                pjsip_sdp_info);
+
+    PJ_ASSERT_RETURN(mod_inv.mod.id >= 0, sdp_info);
+
+    if (!body) {
+        return sdp_info;
+    }
+
+    if (msg_media_type) {
+	msg_type = msg_media_type;
+    } else {
+	if (body->content_type.type.slen == 0) {
+	    return sdp_info;
+	}
+	msg_type = &body->content_type;
+    }
+
+    if (!search_media_type) {
+        pjsip_media_type_init2(&search_type, "application", "sdp");
+    } else {
+        pj_memcpy(&search_type, search_media_type, sizeof(search_type));
+    }
+
+    pjsip_media_type_init2(&multipart_mixed, "multipart", "mixed");
+    pjsip_media_type_init2(&multipart_alternative, "multipart", "alternative");
+
+    if (pjsip_media_type_cmp(msg_type, &search_type, PJ_FALSE) == 0)
+    {
+	/*
+	 * If the print_body function is print_sdp, we know that
+	 * body->data is a pjmedia_sdp_session object and came from
+	 * a tx_data.  If not, it's the text representation of the
+	 * sdp from an rx_data.
+	 */
+        if (body->print_body == print_sdp) {
+            sdp_info->sdp = body->data;
+        } else {
+            sdp_info->body.ptr = (char*)body->data;
+            sdp_info->body.slen = body->len;
+        }
+    } else if (pjsip_media_type_cmp(&multipart_mixed, msg_type, PJ_FALSE) == 0 ||
+	pjsip_media_type_cmp(&multipart_alternative, msg_type, PJ_FALSE) == 0)
+    {
+        pjsip_multipart_part *part;
+        part = pjsip_multipart_find_part(body, &search_type, NULL);
+        if (part) {
+            if (part->body->print_body == print_sdp) {
+                sdp_info->sdp = part->body->data;
+            } else {
+                sdp_info->body.ptr = (char*)part->body->data;
+                sdp_info->body.slen = part->body->len;
+            }
+        }
+    }
+
+    /*
+     * If the body was already a pjmedia_sdp_session, we can just
+     * return it.  If not and there wasn't a text representation
+     * of the sdp either, we can also just return.
+     */
+    if (sdp_info->sdp || !sdp_info->body.ptr) {
+	return sdp_info;
+    }
+
+    /*
+     * If the body was the text representation of teh SDP, we need
+     * to parse it to create a pjmedia_sdp_session object.
+     */
+    status = pjmedia_sdp_parse(pool,
+				sdp_info->body.ptr,
+				sdp_info->body.slen,
+				&sdp_info->sdp);
+    if (status == PJ_SUCCESS)
+	status = pjmedia_sdp_validate2(sdp_info->sdp, PJ_FALSE);
+
+    if (status != PJ_SUCCESS) {
+	sdp_info->sdp = NULL;
+	PJ_PERROR(1, (THIS_FILE, status,
+	    "Error parsing/validating SDP body"));
+    }
+
+    sdp_info->sdp_err = status;
+
+    return sdp_info;
+}
+
+PJ_DEF(pjsip_rdata_sdp_info*) pjsip_rdata_get_sdp_info2(
+                                            pjsip_rx_data *rdata,
+                                            const pjsip_media_type *search_media_type)
+{
+    pjsip_media_type *msg_media_type = NULL;
+    pjsip_rdata_sdp_info *sdp_info;
+
+    if (rdata->endpt_info.mod_data[mod_inv.mod.id]) {
+	return (pjsip_rdata_sdp_info *)rdata->endpt_info.mod_data[mod_inv.mod.id];
+    }
+
+    /*
+     * rdata should have a Content-Type header at this point but we'll
+     * make sure.
+     */
+    if (rdata->msg_info.ctype) {
+	msg_media_type = &rdata->msg_info.ctype->media;
+    }
+    sdp_info = pjsip_get_sdp_info(rdata->tp_info.pool,
+				   rdata->msg_info.msg->body,
+				   msg_media_type,
+				   search_media_type);
+    rdata->endpt_info.mod_data[mod_inv.mod.id] = sdp_info;
+
+    return sdp_info;
+}
 
 PJ_DEF(pjsip_rdata_sdp_info*) pjsip_rdata_get_sdp_info(pjsip_rx_data *rdata)
 {
     return pjsip_rdata_get_sdp_info2(rdata, NULL);
 }
 
-
-PJ_DEF(pjsip_rdata_sdp_info*) pjsip_rdata_get_sdp_info2(
-					    pjsip_rx_data *rdata,
-					    const pjsip_media_type *med_type)
+PJ_DEF(pjsip_tdata_sdp_info*) pjsip_tdata_get_sdp_info2(
+                                            pjsip_tx_data *tdata,
+                                            const pjsip_media_type *search_media_type)
 {
-    pjsip_rdata_sdp_info *sdp_info;
-    pjsip_msg_body *body = rdata->msg_info.msg->body;
-    pjsip_ctype_hdr *ctype_hdr = rdata->msg_info.ctype;
-    pjsip_media_type app_sdp;
+    pjsip_ctype_hdr *ctype_hdr = NULL;
+    pjsip_media_type *msg_media_type = NULL;
+    pjsip_tdata_sdp_info *sdp_info;
 
-    sdp_info = (pjsip_rdata_sdp_info*)
-	       rdata->endpt_info.mod_data[mod_inv.mod.id];
-    if (sdp_info)
-	return sdp_info;
-
-    sdp_info = PJ_POOL_ZALLOC_T(rdata->tp_info.pool,
-				pjsip_rdata_sdp_info);
-    PJ_ASSERT_RETURN(mod_inv.mod.id >= 0, sdp_info);
-    rdata->endpt_info.mod_data[mod_inv.mod.id] = sdp_info;
-
-    if (!med_type) {
-	pjsip_media_type_init2(&app_sdp, "application", "sdp");
-    } else {
-	pj_memcpy(&app_sdp, med_type, sizeof(app_sdp));
+    if (tdata->mod_data[mod_inv.mod.id]) {
+	return (pjsip_tdata_sdp_info *)tdata->mod_data[mod_inv.mod.id];
+    }
+    /*
+     * tdata won't usually have a Content-Type header at this point
+     * but we'll check just the same,
+     */
+    ctype_hdr = pjsip_msg_find_hdr(tdata->msg, PJSIP_H_CONTENT_TYPE, NULL);
+    if (ctype_hdr) {
+	msg_media_type = &ctype_hdr->media;
     }
 
-    if (body && ctype_hdr &&
-	pj_stricmp(&ctype_hdr->media.type, &app_sdp.type)==0 &&
-	pj_stricmp(&ctype_hdr->media.subtype, &app_sdp.subtype)==0)
-    {
-	sdp_info->body.ptr = (char*)body->data;
-	sdp_info->body.slen = body->len;
-    } else if  (body && ctype_hdr &&
-	    	pj_stricmp2(&ctype_hdr->media.type, "multipart")==0 &&
-	    	(pj_stricmp2(&ctype_hdr->media.subtype, "mixed")==0 ||
-	    	 pj_stricmp2(&ctype_hdr->media.subtype, "alternative")==0))
-    {
-	pjsip_multipart_part *part;
-
-	part = pjsip_multipart_find_part(body, &app_sdp, NULL);
-	if (part) {
-	    sdp_info->body.ptr = (char*)part->body->data;
-	    sdp_info->body.slen = part->body->len;
-	}
-    }
-
-    if (sdp_info->body.ptr) {
-	pj_status_t status;
-	status = pjmedia_sdp_parse(rdata->tp_info.pool,
-				   sdp_info->body.ptr,
-				   sdp_info->body.slen,
-				   &sdp_info->sdp);
-	if (status == PJ_SUCCESS)
-	    status = pjmedia_sdp_validate2(sdp_info->sdp, PJ_FALSE);
-
-	if (status != PJ_SUCCESS) {
-	    sdp_info->sdp = NULL;
-	    PJ_PERROR(1,(THIS_FILE, status,
-			 "Error parsing/validating SDP body"));
-	}
-
-	sdp_info->sdp_err = status;
-    }
+    sdp_info = pjsip_get_sdp_info(tdata->pool,
+				   tdata->msg->body,
+				   msg_media_type,
+				   search_media_type);
+    tdata->mod_data[mod_inv.mod.id] = sdp_info;
 
     return sdp_info;
 }
 
+PJ_DEF(pjsip_tdata_sdp_info*) pjsip_tdata_get_sdp_info(pjsip_tx_data *tdata)
+{
+    return pjsip_tdata_get_sdp_info2(tdata, NULL);
+}
 
 /*
  * Verify incoming INVITE request.
@@ -1781,13 +1874,55 @@ PJ_DEF(pj_status_t) pjsip_create_sdp_body( pj_pool_t *pool,
     return PJ_SUCCESS;
 }
 
+static pjsip_multipart_part* create_sdp_part(pj_pool_t *pool, pjmedia_sdp_session *sdp)
+{
+    pjsip_multipart_part *sdp_part;
+    pjsip_media_type media_type;
+
+    pjsip_media_type_init2(&media_type, "application", "sdp");
+
+    sdp_part = pjsip_multipart_create_part(pool);
+    PJ_ASSERT_RETURN(sdp_part != NULL, NULL);
+
+    sdp_part->body = PJ_POOL_ZALLOC_T(pool, pjsip_msg_body);
+    PJ_ASSERT_RETURN(sdp_part->body != NULL, NULL);
+
+    pjsip_media_type_cp(pool, &sdp_part->body->content_type, &media_type);
+
+    sdp_part->body->data = sdp;
+    sdp_part->body->clone_data = clone_sdp;
+    sdp_part->body->print_body = print_sdp;
+
+    return sdp_part;
+}
+
+PJ_DEF(pj_status_t) pjsip_create_multipart_sdp_body(pj_pool_t *pool,
+						     pjmedia_sdp_session *sdp,
+						     pjsip_msg_body **p_body)
+{
+    pjsip_media_type media_type;
+    pjsip_msg_body *multipart;
+    pjsip_multipart_part *sdp_part;
+
+    pjsip_media_type_init2(&media_type, "multipart", "mixed");
+    multipart = pjsip_multipart_create(pool, &media_type, NULL);
+    PJ_ASSERT_RETURN(multipart != NULL, PJ_ENOMEM);
+
+    sdp_part = create_sdp_part(pool, sdp);
+    PJ_ASSERT_RETURN(sdp_part != NULL, PJ_ENOMEM);
+    pjsip_multipart_add_part(pool, multipart, sdp_part);
+    *p_body = multipart;
+
+    return PJ_SUCCESS;
+}
+
 static pjsip_msg_body *create_sdp_body(pj_pool_t *pool,
 				       const pjmedia_sdp_session *c_sdp)
 {
     pjsip_msg_body *body;
     pj_status_t status;
 
-    status = pjsip_create_sdp_body(pool, 
+    status = pjsip_create_sdp_body(pool,
 				   pjmedia_sdp_session_clone(pool, c_sdp),
 				   &body);
 
@@ -1841,7 +1976,7 @@ static void cleanup_allow_sup_hdr(unsigned inv_option,
     }
 
     /* Remove "timer" from Supported header if Session-Timers is
-     * disabled (https://trac.pjsip.org/repos/ticket/1761)
+     * disabled (https://github.com/pjsip/pjproject/issues/1761)
      */
     if ((inv_option & PJSIP_INV_SUPPORT_TIMER) == 0 && sup_hdr) {
 	const pj_str_t STR_TIMER = { "timer", 5 };
@@ -2066,6 +2201,14 @@ static pj_status_t inv_check_sdp_in_incoming_msg( pjsip_inv_session *inv,
 	return PJMEDIA_SDP_EINSDP;
     }
 
+    /* Process the SDP body. */
+    if (sdp_info->sdp_err) {
+        PJ_PERROR(4,(THIS_FILE, sdp_info->sdp_err,
+             "Error parsing SDP in %s",
+             pjsip_rx_data_get_info(rdata)));
+        return PJMEDIA_SDP_EINSDP;
+    }
+
     /* Get/attach invite session's transaction data */
     tsx_inv_data = (struct tsx_inv_data*) tsx->mod_data[mod_inv.mod.id];
     if (tsx_inv_data == NULL) {
@@ -2119,6 +2262,7 @@ static pj_status_t inv_check_sdp_in_incoming_msg( pjsip_inv_session *inv,
 	       )
 	   )
 	{
+	    pjsip_sdp_info *tdata_sdp_info;
 	    const pjmedia_sdp_session *reoffer_sdp = NULL;
 
 	    if (pjmedia_sdp_neg_get_state(inv->neg) !=
@@ -2136,14 +2280,15 @@ static pj_status_t inv_check_sdp_in_incoming_msg( pjsip_inv_session *inv,
 		      (st_code/10==18? "early" : "final" )));
 
 	    /* Retrieve original SDP offer from INVITE request */
-	    reoffer_sdp = (const pjmedia_sdp_session*) 
-			  tsx->last_tx->msg->body->data;
+	    tdata_sdp_info = pjsip_tdata_get_sdp_info(tsx->last_tx);
+	    reoffer_sdp = tdata_sdp_info->sdp;
 
 	    /* Feed the original offer to negotiator */
 	    status = pjmedia_sdp_neg_modify_local_offer2(inv->pool_prov, 
 							 inv->neg,
                                                          inv->sdp_neg_flags,
 						         reoffer_sdp);
+
 	    if (status != PJ_SUCCESS) {
 		PJ_LOG(1,(inv->obj_name, "Error updating local offer for "
 			  "forked 2xx/18x response (err=%d)", status));
@@ -2162,14 +2307,6 @@ static pj_status_t inv_check_sdp_in_incoming_msg( pjsip_inv_session *inv,
 	    }
 	    return PJ_SUCCESS;
 	}
-    }
-
-    /* Process the SDP body. */
-    if (sdp_info->sdp_err) {
-	PJ_PERROR(4,(THIS_FILE, sdp_info->sdp_err,
-		     "Error parsing SDP in %s",
-		     pjsip_rx_data_get_info(rdata)));
-	return PJMEDIA_SDP_EINSDP;
     }
 
     pj_assert(sdp_info->sdp != NULL);
@@ -2263,6 +2400,8 @@ static pj_status_t inv_check_sdp_in_incoming_msg( pjsip_inv_session *inv,
 	tsx_inv_data->done_early = (status_code/100==1);
 	tsx_inv_data->done_early_rel = tsx_inv_data->done_early &&
 				       pjsip_100rel_is_reliable(rdata);
+	if (!inv->sdp_done_early_rel)
+	   inv->sdp_done_early_rel = tsx_inv_data->done_early_rel;
 	pj_strdup(tsx->pool, &tsx_inv_data->done_tag, 
 		  &rdata->msg_info.to->tag);
 
@@ -2906,7 +3045,7 @@ PJ_DEF(pj_status_t) pjsip_inv_process_redirect( pjsip_inv_session *inv,
 	    pjsip_tx_data_add_ref(tdata);
 
 	    /* Restore strict route set.
-	     * See http://trac.pjsip.org/repos/ticket/492
+	     * See https://github.com/pjsip/pjproject/issues/492
 	     */
 	    pjsip_restore_strict_route_set(tdata);
 
@@ -3139,6 +3278,16 @@ PJ_DEF(pj_status_t) pjsip_inv_update (	pjsip_inv_session *inv,
 
     /* Process offer, if any */
     if (offer) {
+	if (inv->state == PJSIP_INV_STATE_EARLY && !inv->sdp_done_early_rel) {
+	    PJ_LOG(4,(inv->dlg->obj_name,
+		      "RFC 3311 section 5.1 recommends against sending UPDATE"
+		      " without reliable prov response"));
+#if PJSIP_INV_UPDATE_EARLY_CHECK_RELIABLE
+	    status = PJ_EINVALIDOP;
+	    goto on_error;
+#endif
+	}
+
 	if (pjmedia_sdp_neg_get_state(inv->neg)!=PJMEDIA_SDP_NEG_STATE_DONE) {
 	    PJ_LOG(4,(inv->dlg->obj_name,
 		      "Invalid SDP offer/answer state for UPDATE"));
@@ -3305,7 +3454,7 @@ PJ_DEF(pj_status_t) pjsip_inv_send_msg( pjsip_inv_session *inv,
 	}
 
 	/* Don't send BYE before ACK is received
-	 * http://trac.pjsip.org/repos/ticket/1712
+	 * https://github.com/pjsip/pjproject/issues/1712
 	 */
 	if (tdata->msg->line.req.method.id == PJSIP_BYE_METHOD &&
 	    inv->role == PJSIP_ROLE_UAS &&
@@ -3412,7 +3561,7 @@ static void inv_respond_incoming_cancel(pjsip_inv_session *inv,
     pj_assert(e->body.tsx_state.type == PJSIP_EVENT_RX_MSG);
     rdata = e->body.tsx_state.src.rdata;
 
-    /* https://trac.pjsip.org/repos/ticket/1651
+    /* https://github.com/pjsip/pjproject/issues/1651
      * Special treatment for CANCEL. Since here we're responding to CANCEL
      * automatically (including 487 to INVITE), application will see the
      * 200/OK response to CANCEL first in the callback, and then 487 to
@@ -3870,6 +4019,10 @@ static void inv_respond_incoming_prack(pjsip_inv_session *inv,
 	}
 	
 	tsx_inv_data->sdp_done = PJ_TRUE;
+    }
+
+    if (pjmedia_sdp_neg_get_state(inv->neg) == PJMEDIA_SDP_NEG_STATE_DONE) {
+    	inv->sdp_done_early_rel = PJ_TRUE;
     }
 }
 
@@ -4741,7 +4894,7 @@ static void inv_on_state_connecting( pjsip_inv_session *inv, pjsip_event *e)
 		inv_set_state(inv, PJSIP_INV_STATE_CONFIRMED, e);
 
 		/* Send pending BYE if any:
-		 *   http://trac.pjsip.org/repos/ticket/1712
+		 *   https://github.com/pjsip/pjproject/issues/1712
 		 * Do this after setting the state to CONFIRMED, so that we
 		 * have consistent CONFIRMED state between caller and callee.
 		 */
@@ -4834,7 +4987,7 @@ static void inv_on_state_connecting( pjsip_inv_session *inv, pjsip_event *e)
 	pjsip_tx_data *tdata;
 	pj_status_t status;
 
-	/* See https://trac.pjsip.org/repos/ticket/1455
+	/* See https://github.com/pjsip/pjproject/issues/1455
 	 * Handle incoming re-INVITE before current INVITE is confirmed.
 	 * According to RFC 5407:
 	 *  - answer with 200 if we don't have pending offer-answer

@@ -27,6 +27,10 @@
 #   define PJSUA_REQUIRE_CONSECUTIVE_RTCP_PORT	0
 #endif
 
+#ifndef PJSUA_RESET_SRTP_ROC_ON_REM_ADDRESS_CHANGE
+#   define PJSUA_RESET_SRTP_ROC_ON_REM_ADDRESS_CHANGE	0
+#endif
+
 static void stop_media_stream(pjsua_call *call, unsigned med_idx);
 
 static void pjsua_media_config_dup(pj_pool_t *pool,
@@ -245,7 +249,7 @@ pj_status_t pjsua_media_subsys_destroy(unsigned flags)
 
 /*
  * Create RTP and RTCP socket pair, and possibly resolve their public
- * address via STUN.
+ * address via STUN/UPnP.
  */
 static pj_status_t create_rtp_rtcp_sock(pjsua_call_media *call_med,
 					const pjsua_transport_config *cfg,
@@ -283,8 +287,14 @@ static pj_status_t create_rtp_rtcp_sock(pjsua_call_media *call_med,
 	}
     }
 
-    if (acc->next_rtp_port == 0 || cfg->port == 0)
-	acc->next_rtp_port = (pj_uint16_t)cfg->port;
+    if (acc->next_rtp_port == 0 || cfg->port == 0) {
+	if (cfg->port != 0 && cfg->port_range != 0 && cfg->randomize_port) {
+	    unsigned offset = ((pj_rand() % (cfg->port_range)) / 2) * 2;
+	    acc->next_rtp_port = (pj_uint16_t)cfg->port + offset;
+	} else {
+	    acc->next_rtp_port = (pj_uint16_t)cfg->port;
+	}
+    }
 
     for (i=0; i<2; ++i)
 	sock[i] = PJ_INVALID_SOCKET;
@@ -532,6 +542,43 @@ static pj_status_t create_rtp_rtcp_sock(pjsua_call_media *call_med,
 	    break;
 #endif
 
+#if defined(PJNATH_HAS_UPNP) && (PJNATH_HAS_UPNP != 0)
+	} else if ((!use_ipv6 || use_nat64) &&
+	           pjsua_media_acc_is_using_upnp(call_med->call->acc_id) &&
+	    	   pjsua_var.upnp_status == PJ_SUCCESS)
+	{
+	    status = pj_upnp_add_port_mapping(2, sock, NULL, mapped_addr);
+	    if (status == PJ_SUCCESS) {
+	    	call_med->use_upnp = PJ_TRUE;
+	    	pj_sockaddr_cp(&call_med->mapped_addr[0], &mapped_addr[0]);
+	    	pj_sockaddr_cp(&call_med->mapped_addr[1], &mapped_addr[1]);
+	    } else {
+	    	pjsua_perror(THIS_FILE, "Error adding UPnP "
+	    	    			"port mapping", status);
+
+		if (!pj_sockaddr_has_addr(&bound_addr)) {
+		    pj_sockaddr addr;
+
+		    /* Get local IP address. */
+		    status = pj_gethostip(af, &addr);
+		    if (status != PJ_SUCCESS)
+			goto on_error;
+
+		    pj_sockaddr_copy_addr(&bound_addr, &addr);
+		}
+
+		for (i = 0; i < 2; ++i) {
+		    pj_sockaddr_init(af, &mapped_addr[i], NULL, 0);
+		    pj_sockaddr_copy_addr(&mapped_addr[i], &bound_addr);
+		    pj_sockaddr_set_port(&mapped_addr[i],
+					 (pj_uint16_t)(acc->next_rtp_port+i));
+		}
+		break;
+	    }
+
+	    break;
+#endif
+
 	} else if (cfg->public_addr.slen) {
 
 	    status = pj_sockaddr_init(af, &mapped_addr[0], &cfg->public_addr,
@@ -674,8 +721,14 @@ static pj_status_t create_loop_media_transport(
     if (cfg->bound_addr.slen)
         opt.addr = cfg->bound_addr;
 
-    if (acc->next_rtp_port == 0 || cfg->port == 0)
-	acc->next_rtp_port = (pj_uint16_t)cfg->port;
+    if (acc->next_rtp_port == 0 || cfg->port == 0) {
+        if (cfg->port != 0 && cfg->port_range != 0 && cfg->randomize_port) {
+            unsigned offset = ((pj_rand() % (cfg->port_range)) / 2) * 2;
+ 	    acc->next_rtp_port = (pj_uint16_t)cfg->port + offset;
+        } else {
+	    acc->next_rtp_port = (pj_uint16_t)cfg->port;
+	}
+    }
 
     if (cfg->port > 0 && cfg->port_range > 0 &&
         (acc->next_rtp_port > cfg->port + cfg->port_range ||
@@ -763,7 +816,7 @@ static void ice_init_complete_cb(void *user_data)
     /* No need to acquire_call() if we only change the tp_ready flag
      * (i.e. transport is being created synchronously). Otherwise
      * calling acquire_call() here may cause deadlock. See
-     * https://trac.pjsip.org/repos/ticket/1578
+     * https://github.com/pjsip/pjproject/issues/1578
      */
     call_med->tp_ready = call_med->tp_result;
 
@@ -1179,7 +1232,7 @@ static pj_status_t create_ice_media_transport(
 	    PJSUA_UNLOCK();
         if (dlg) {
             /* Don't lock otherwise deadlock:
-             * https://trac.pjsip.org/repos/ticket/1737
+             * https://github.com/pjsip/pjproject/issues/1737
              */
 	    pjsip_dlg_inc_session(dlg, &pjsua_var.mod);
             pjsip_dlg_dec_lock(dlg);
@@ -1635,11 +1688,10 @@ pj_status_t call_media_on_event(pjmedia_event *event,
 	    if (call_med->strm.v.rdr_win_id != PJSUA_INVALID_ID) {
 		pjsua_vid_win *w = &pjsua_var.win[call_med->strm.v.rdr_win_id];
 		if (event->epub == w->vp_rend) {
-		    /* Renderer just changed format, reconnect stream */
-		    pjsua_vid_conf_disconnect(call_med->strm.v.strm_dec_slot,
-					      w->rend_slot);
-		    pjsua_vid_conf_connect(call_med->strm.v.strm_dec_slot,
-					   w->rend_slot, NULL);
+		    /* Renderer just changed format, update its
+		     * conference bridge port.
+		     */
+		    pjsua_vid_conf_update_port(w->rend_slot);
 		}
 	    }
 
@@ -1647,10 +1699,7 @@ pj_status_t call_media_on_event(pjmedia_event *event,
 		/* Stream decoder changed format, update all conf listeners
 		 * by reconnecting.
 		 */
-		pjsua_conf_port_id dec_pid = call_med->strm.v.strm_dec_slot;
 		pjmedia_port *strm_dec;
-		pjsua_vid_conf_port_info pi;
-		unsigned i;
 
 		status = pjmedia_vid_stream_get_port(call_med->strm.v.stream,
 						     PJMEDIA_DIR_DECODING,
@@ -1662,14 +1711,10 @@ pj_status_t call_media_on_event(pjmedia_event *event,
 		if (event->epub != strm_dec)
 		    break;
 
-		status = pjsua_vid_conf_get_port_info(dec_pid, &pi);
-		if (status != PJ_SUCCESS)
-		    break;
-
-		for (i = 0; i < pi.listener_cnt; i++) {
-		    pjsua_vid_conf_disconnect(dec_pid, pi.listeners[i]);
-		    pjsua_vid_conf_connect(dec_pid, pi.listeners[i], NULL);
-		}
+		/* Stream decoder just changed format, update its
+		 * conference bridge port.
+		 */
+		pjsua_vid_conf_update_port(call_med->strm.v.strm_dec_slot);
 	    }
 	    break;
 
@@ -1925,7 +1970,7 @@ on_return:
 
 /* Determine if call's media is being changed, for example when video is being
  * added. Then we can reject incoming re-INVITE, for example. This is the
- * solution for https://trac.pjsip.org/repos/ticket/1738
+ * solution for https://github.com/pjsip/pjproject/issues/1738
  */
 pj_bool_t  pjsua_call_media_is_changing(pjsua_call *call)
 {
@@ -2476,10 +2521,6 @@ pj_status_t pjsua_media_channel_init(pjsua_call_id call_id,
 	    /* Initialize default initial media direction as bidirectional */
 	    call_med->def_dir = PJMEDIA_DIR_ENCODING_DECODING;
 	}
-	call_med->dir = call_med->def_dir;
-	if (call_med->dir == PJMEDIA_DIR_NONE) {
-	    enabled = PJ_FALSE;
-	}
 
 	if (enabled) {
 	    call_med->enable_rtcp_mux = acc->cfg.enable_rtcp_mux;
@@ -2789,7 +2830,7 @@ pj_status_t pjsua_media_channel_create_sdp(pjsua_call_id call_id,
 
 	/* Ask pjmedia endpoint to create SDP media line */
 	pjmedia_endpt_create_sdp_param_default(&param);
-	param.dir = call_med->dir;
+	param.dir = call_med->def_dir;
 	switch (call_med->type) {
 	case PJMEDIA_TYPE_AUDIO:
 	    status = pjmedia_endpt_create_audio_sdp(pjsua_var.med_endpt, pool,
@@ -3062,6 +3103,7 @@ static void stop_media_stream(pjsua_call *call, unsigned med_idx)
 
     pj_log_push_indent();
 
+    call_med->prev_type = call_med->type;
     if (call_med->type == PJMEDIA_TYPE_AUDIO) {
 	pjsua_aud_stop_stream(call_med);
     }
@@ -3092,6 +3134,11 @@ static void stop_media_stream(pjsua_call *call, unsigned med_idx)
 	prov_med->rtp_tx_seq	    = call_med->rtp_tx_seq;
 	prov_med->rtp_tx_ts	    = call_med->rtp_tx_ts;
 
+	/* Saved media type and stream info */
+	prov_med->prev_type = call_med->prev_type;
+	prov_med->prev_aud_si = call_med->prev_aud_si;
+	prov_med->prev_vid_si = call_med->prev_vid_si;
+
 	/* Stream */
 	if (call_med->type == PJMEDIA_TYPE_AUDIO) {
 	    prov_med->strm.a.conf_slot = call_med->strm.a.conf_slot;
@@ -3119,9 +3166,63 @@ static void stop_media_session(pjsua_call_id call_id)
     }
 }
 
+
+/*
+ * Print log of call states. Since call states may be too long for logger,
+ * printing it is a bit tricky, it should be printed part by part as long 
+ * as the logger can accept.
+ */
+static void log_call_dump(int call_id) 
+{
+    pj_pool_t *pool;
+    unsigned call_dump_len;
+    unsigned part_len;
+    unsigned part_idx;
+    unsigned log_decor;
+    char *buf;
+    enum { BUF_LEN = 10*1024 };
+    pj_status_t status;
+
+    pool = pjsua_pool_create("tmp", 1024, 1024);
+    buf = pj_pool_alloc(pool, sizeof(char) * BUF_LEN);
+
+    status = pjsua_call_dump(call_id, PJ_TRUE, buf, BUF_LEN, "  ");
+    if (status != PJ_SUCCESS)
+	goto on_return;
+
+    call_dump_len = (unsigned)pj_ansi_strlen(buf);
+
+    log_decor = pj_log_get_decor();
+    pj_log_set_decor(log_decor & ~(PJ_LOG_HAS_NEWLINE | PJ_LOG_HAS_CR));
+    PJ_LOG(3,(THIS_FILE, "\n"));
+    pj_log_set_decor(0);
+
+    part_idx = 0;
+    part_len = PJ_LOG_MAX_SIZE-80;
+    while (part_idx < call_dump_len) {
+	char p_orig, *p;
+
+	p = buf + part_idx;
+	if (part_idx + part_len > call_dump_len)
+	    part_len = call_dump_len - part_idx;
+	p_orig = p[part_len];
+	p[part_len] = '\0';
+	PJ_LOG(3,(THIS_FILE, "%s", p));
+	p[part_len] = p_orig;
+	part_idx += part_len;
+    }
+    pj_log_set_decor(log_decor);
+
+on_return:
+    if (pool)
+	pj_pool_release(pool);
+}
+
+
 pj_status_t pjsua_media_channel_deinit(pjsua_call_id call_id)
 {
     pjsua_call *call = &pjsua_var.calls[call_id];
+    pjsip_dialog *dlg;
     unsigned mi;
 
     for (mi=0; mi<call->med_cnt; ++mi) {
@@ -3138,6 +3239,11 @@ pj_status_t pjsua_media_channel_deinit(pjsua_call_id call_id)
 
     PJ_LOG(4,(THIS_FILE, "Call %d: deinitializing media..", call_id));
     pj_log_push_indent();
+
+    /* Print call dump first */
+    dlg = (call->inv? call->inv->dlg : call->async_call.dlg);
+    if (dlg && pj_log_get_level() >= 3)
+    	log_call_dump(call_id);
 
     stop_media_session(call_id);
 
@@ -3157,7 +3263,48 @@ pj_status_t pjsua_media_channel_deinit(pjsua_call_id call_id)
     for (mi=0; mi<call->med_cnt; ++mi) {
 	pjsua_call_media *call_med = &call->media[mi];
 
+        if (call_med->use_upnp) {
+#if defined(PJNATH_HAS_UPNP) && (PJNATH_HAS_UPNP != 0)
+            pj_upnp_del_port_mapping(&call_med->mapped_addr[0]);
+            pj_upnp_del_port_mapping(&call_med->mapped_addr[1]);
+#endif
+        }
+
         if (call_med->tp_st > PJSUA_MED_TP_IDLE) {
+    	    pjmedia_transport_info tpinfo;
+    	    pjmedia_srtp_info *srtp_info;
+    	    pjmedia_ice_transport_info *ice_info;
+
+    	    pjmedia_transport_info_init(&tpinfo);
+    	    pjmedia_transport_get_info(call_med->tp, &tpinfo);
+    	    srtp_info = (pjmedia_srtp_info *)
+    	    		pjmedia_transport_info_get_spc_info(
+	            	    &tpinfo, PJMEDIA_TRANSPORT_TYPE_SRTP);
+    	    ice_info = (pjmedia_ice_transport_info *)
+    	    	       pjmedia_transport_info_get_spc_info(
+	            	   &tpinfo, PJMEDIA_TRANSPORT_TYPE_ICE);
+
+	    call_med->prev_srtp_use = (srtp_info && srtp_info->active)?
+	    			      PJ_TRUE: PJ_FALSE;
+	    if (call_med->prev_srtp_use)
+	    	call_med->prev_srtp_info = *srtp_info;
+	    call_med->prev_ice_use = (ice_info && ice_info->active)?
+	    			     PJ_TRUE: PJ_FALSE;
+	    if (call_med->prev_ice_use)
+	    	call_med->prev_ice_info = *ice_info;
+
+    	    /* Try to sync recent changes to provisional media */
+    	    if (mi < call->med_prov_cnt && 
+		call->media_prov[mi].tp == call_med->tp)
+    	    {
+		pjsua_call_media *prov_med = &call->media_prov[mi];
+
+		prov_med->prev_ice_use = call_med->prev_ice_use;
+		prov_med->prev_ice_info = call_med->prev_ice_info;
+		prov_med->prev_srtp_use = call_med->prev_srtp_use;
+		prov_med->prev_srtp_info = call_med->prev_srtp_info;
+	    }
+
 	    pjsua_set_media_tp_state(call_med, PJSUA_MED_TP_IDLE);
 	    pjmedia_transport_media_stop(call_med->tp);
 	}
@@ -3212,6 +3359,199 @@ static pj_bool_t is_ice_running(pjmedia_transport *tp)
 }
 
 
+#if defined(PJMEDIA_HAS_SRTP) && (PJMEDIA_HAS_SRTP != 0)
+
+static void check_srtp_roc(pjsua_call *call,
+			   unsigned med_idx,
+			   const pjsua_stream_info *new_si_,
+    			   const pjmedia_sdp_media *local_sdp,
+    			   const pjmedia_sdp_media *remote_sdp)
+{
+    pjsua_call_media *call_med = &call->media[med_idx];
+    pjmedia_transport_info tpinfo;
+    pjmedia_srtp_info *srtp_info;
+    pjmedia_transport *srtp;
+    pjmedia_ice_transport_info *ice_info;
+    const pjmedia_stream_info *prev_aud_si = NULL;
+    pjmedia_stream_info aud_si;
+#if defined(PJMEDIA_HAS_VIDEO) && (PJMEDIA_HAS_VIDEO != 0)
+    const pjmedia_vid_stream_info *prev_vid_si = NULL;
+    pjmedia_vid_stream_info vid_si;
+#endif
+    pj_bool_t local_change = PJ_FALSE, rem_change = PJ_FALSE;
+    pjmedia_srtp_setting setting;
+
+    pjmedia_transport_info_init(&tpinfo);
+    pjmedia_transport_get_info(call_med->tp, &tpinfo);
+    srtp_info = (pjmedia_srtp_info *) pjmedia_transport_info_get_spc_info(
+	            &tpinfo, PJMEDIA_TRANSPORT_TYPE_SRTP);
+    srtp = pjmedia_transport_info_get_transport(&tpinfo,
+						PJMEDIA_TRANSPORT_TYPE_SRTP);
+
+    /* Just return if there is no SRTP transport in the transport stack. */
+    if (!srtp_info || !srtp)
+    	return;
+
+    ice_info = (pjmedia_ice_transport_info*)
+	       pjmedia_transport_info_get_spc_info(&tpinfo,
+	           PJMEDIA_TRANSPORT_TYPE_ICE);
+
+    /* RFC 3711 section 3.3.1: 
+     * After a re-keying occurs (changing to a new master key), the rollover
+     * counter always maintains its sequence of values, i.e., it MUST NOT be
+     * reset to zero. 
+     *
+     * RFC 4568 section 7.1.4:
+     * If the offerer includes an IP address and/or port that differs from
+     * that used previously for a media stream (or FEC stream), the offerer
+     * MUST include a new master key with the offer (and in so doing, it
+     * will be creating a new crypto context where the ROC is set to zero).
+     * Similarly, if the answerer includes an IP address and/or port that
+     * differs from that used previously for a media stream (or FEC stream),
+     * the answerer MUST include a new master key with the answer (and hence
+     * create a new crypto context with the ROC set to zero).
+     */
+    if (call->opt.flag & PJSUA_CALL_REINIT_MEDIA) {
+    	if (!call_med->prev_srtp_use) return;
+    	
+    	/* The stream has been deinitialized by now, so we need to retrieve
+    	 * the previous stream info from the stored data.
+    	 */
+        if (call_med->prev_type == PJMEDIA_TYPE_AUDIO)
+            prev_aud_si = &call_med->prev_aud_si;
+#if defined(PJMEDIA_HAS_VIDEO) && (PJMEDIA_HAS_VIDEO != 0)
+	else if (call_med->prev_type == PJMEDIA_TYPE_VIDEO)
+	    prev_vid_si = &call_med->prev_vid_si;
+#endif
+    } else {
+    	call_med->prev_srtp_use = PJ_TRUE;
+	call_med->prev_srtp_info = *srtp_info;
+	call_med->prev_ice_use = (ice_info && ice_info->active)?
+	    			 PJ_TRUE: PJ_FALSE;
+	if (call_med->prev_ice_use)
+	    call_med->prev_ice_info = *ice_info;
+
+    	if (call_med->type == PJMEDIA_TYPE_AUDIO) {
+	    /* Get current active audio stream info */
+	    if (call_med->strm.a.stream) {
+	        pjmedia_stream_get_info(call_med->strm.a.stream, &aud_si);
+	        prev_aud_si = &aud_si;
+	    }
+    	} 
+#if defined(PJMEDIA_HAS_VIDEO) && (PJMEDIA_HAS_VIDEO != 0)
+    	else if (call_med->type == PJMEDIA_TYPE_VIDEO) {
+	    /* Get current active video stream info */
+	    if (call_med->strm.v.stream) {
+	        pjmedia_vid_stream_get_info(call_med->strm.v.stream, &vid_si);
+	        prev_vid_si = &vid_si;
+	    }
+	}
+#endif
+    }
+    
+#if 0
+    PJ_LOG(4, (THIS_FILE, "SRTP TX ROC %d %d",
+    			  call_med->prev_srtp_info.tx_roc.ssrc,
+    			  call_med->prev_srtp_info.tx_roc.roc));
+    PJ_LOG(4, (THIS_FILE, "SRTP RX ROC %d %d",
+    			  call_med->prev_srtp_info.rx_roc.ssrc,
+    			  call_med->prev_srtp_info.rx_roc.roc));
+#endif
+    
+    if (prev_aud_si) {
+	const pjmedia_stream_info *new_si = &new_si_->info.aud;
+
+	/* Local IP address changes */
+	if (pj_sockaddr_cmp(&prev_aud_si->local_addr, &new_si->local_addr))
+	    local_change = PJ_TRUE;
+	/* Remote IP address changes */
+	if (pj_sockaddr_cmp(&prev_aud_si->rem_addr, &new_si->rem_addr))
+	    rem_change = PJ_TRUE;
+    }
+#if defined(PJMEDIA_HAS_VIDEO) && (PJMEDIA_HAS_VIDEO != 0)
+    if (prev_vid_si) {
+	const pjmedia_vid_stream_info *new_si = &new_si_->info.vid;
+	
+	/* Local IP address changes */
+	if (pj_sockaddr_cmp(&prev_vid_si->local_addr, &new_si->local_addr))
+	    local_change = PJ_TRUE;
+	/* Remote IP address changes */
+	if (pj_sockaddr_cmp(&prev_vid_si->rem_addr, &new_si->rem_addr))
+	    rem_change = PJ_TRUE;
+    }
+#endif
+
+    /* There are some complications if we are using ICE, because default
+     * IP address can change after negotiation. In this case, we'll consider
+     * this as a change of IP address only if ICE is restarted as well
+     * (i.e. if ufrag changes).
+     */
+    if (ice_info && call_med->prev_ice_use) {
+	const pj_str_t STR_ICE_UFRAG = { "ice-ufrag", 9 };
+	pjmedia_sdp_attr *attr;
+
+	if (local_change) {
+	    attr = pjmedia_sdp_attr_find(local_sdp->attr_count,
+	    				 local_sdp->attr, &STR_ICE_UFRAG,
+	    				 NULL);
+	    if (!pj_strcmp(&call_med->prev_ice_info.loc_ufrag,
+	    		   &attr->value))
+	    {
+	    	PJ_LOG(4, (THIS_FILE, "ICE unchanged, SRTP TX ROC "
+	    	    		      "maintained"));
+	    	local_change = PJ_FALSE;
+	    }
+	}
+
+	if (rem_change) {
+	    attr = pjmedia_sdp_attr_find(remote_sdp->attr_count,
+	    				 remote_sdp->attr, &STR_ICE_UFRAG,
+	    				 NULL);
+	    if (!pj_strcmp(&call_med->prev_ice_info.rem_ufrag,
+	    		   &attr->value))
+	    {
+	    	PJ_LOG(4, (THIS_FILE, "ICE unchanged, SRTP RX ROC "
+	    	    		      "maintained"));
+	    	rem_change = PJ_FALSE;
+	    }
+	 }	    
+    }
+
+    pjmedia_transport_srtp_get_setting(srtp, &setting);
+    setting.tx_roc = call_med->prev_srtp_info.tx_roc;
+    setting.rx_roc = call_med->prev_srtp_info.rx_roc;
+    if (local_change) {
+	PJ_LOG(4, (THIS_FILE, "Local address change detected, "
+			      "resetting SRTP TX ROC"));
+    	setting.tx_roc.roc = 0;
+    	/* Depending on the interpretation of the RFC, remote
+    	 * may or may not reset its ROC as well. So we anticipate both.
+    	 */
+    	setting.prev_rx_roc = call_med->prev_srtp_info.rx_roc;
+    	setting.prev_rx_roc.roc = 0;
+    }
+    if (rem_change) {
+	PJ_LOG(4, (THIS_FILE, "Remote address change detected, "
+			      "resetting SRTP RX ROC"));
+    	setting.rx_roc.roc = 0;
+    	/* There is a possibility that remote's IP address in the SDP
+    	 * changes, but its actual IP address actually doesn't change,
+    	 * such as when using ICE. So the only thing we can do here
+    	 * is to anticipate if remote doesn't reset the ROC.
+    	 */
+    	setting.prev_rx_roc = call_med->prev_srtp_info.rx_roc;
+#if PJSUA_RESET_SRTP_ROC_ON_REM_ADDRESS_CHANGE
+ 	if (!local_change) {
+	    PJ_LOG(4, (THIS_FILE, "Remote address change detected, "
+			      	  "resetting SRTP TX ROC"));
+ 	    setting.tx_roc.roc = 0;
+ 	}
+#endif 
+    }
+    pjmedia_transport_srtp_modify_setting(srtp, &setting);
+}
+#endif
+
 static pj_bool_t is_media_changed(const pjsua_call *call,
 				  unsigned med_idx,
 				  const pjsua_stream_info *new_si_)
@@ -3251,12 +3591,13 @@ static pj_bool_t is_media_changed(const pjsua_call *call,
 	    return (new_si->dir != PJMEDIA_DIR_NONE);
 	}
 
+	if (old_si->rtcp_mux != new_si->rtcp_mux)
+	    return PJ_TRUE;
+
 	/* Compare remote RTP address. If ICE is running, change in default
 	 * address can happen after negotiation, this can be handled
 	 * internally by ICE and does not need to cause media restart.
 	 */
-	if (old_si->rtcp_mux != new_si->rtcp_mux)
-	    return PJ_TRUE;
 	if (!is_ice_running(call_med->tp) &&
 	    pj_sockaddr_cmp(&old_si->rem_addr, &new_si->rem_addr))
 	{
@@ -3533,6 +3874,11 @@ pj_status_t pjsua_media_channel_update(pjsua_call_id call_id,
 		goto on_check_med_status;
 	    }
 
+#if defined(PJMEDIA_HAS_RTCP_XR) && (PJMEDIA_HAS_RTCP_XR != 0)
+	    /* Enable/disable RTCP XR based on account setting. */
+	    si->rtcp_xr_enabled = acc->cfg.enable_rtcp_xr;
+#endif
+
 	    /* Check if remote wants RTP and RTCP multiplexing,
 	     * but we don't enable it.
 	     */
@@ -3613,9 +3959,18 @@ pj_status_t pjsua_media_channel_update(pjsua_call_id call_id,
  		}
      	    }
 
-	    /* Check if this media is changed */
 	    stream_info.type = PJMEDIA_TYPE_AUDIO;
 	    stream_info.info.aud = the_si;
+
+#if PJSUA_MEDIA_HAS_PJMEDIA || PJSUA_THIRD_PARTY_STREAM_HAS_GET_INFO
+#if defined(PJMEDIA_HAS_SRTP) && (PJMEDIA_HAS_SRTP != 0)
+	    /* Check if we need to reset or maintain SRTP ROC */
+	    check_srtp_roc(call, mi, &stream_info,
+	    		   local_sdp->media[mi], remote_sdp->media[mi]);
+#endif
+#endif
+
+	    /* Check if this media is changed */
 	    if (pjsua_var.media_cfg.no_smart_media_update ||
 		is_media_changed(call, mi, &stream_info))
 	    {

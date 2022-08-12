@@ -123,7 +123,7 @@ typedef struct pj_sys_info
  */
 PJ_DECL(const pj_sys_info*) pj_get_sys_info(void);
 
-/*
+/**
  * @}
  */
 
@@ -245,6 +245,9 @@ PJ_DECL(int) pj_thread_get_prio(pj_thread_t *thread);
  * Set the thread priority. The priority value must be in the priority
  * value range, which can be retrieved with #pj_thread_get_prio_min() and
  * #pj_thread_get_prio_max() functions.
+ *
+ * For Android, this function will only set the priority of the calling thread
+ * (the thread param must be set to NULL or the calling thread handle).
  *
  * @param thread	Thread handle.
  * @param prio		New priority to be set to the thread.

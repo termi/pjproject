@@ -95,6 +95,7 @@ typedef struct pjmedia_stream_info
     pjmedia_type	type;	    /**< Media type (audio, video)	    */
     pjmedia_tp_proto	proto;	    /**< Transport protocol (RTP/AVP, etc.) */
     pjmedia_dir		dir;	    /**< Media direction.		    */
+    pj_sockaddr		local_addr; /**< Local RTP address		    */
     pj_sockaddr		rem_addr;   /**< Remote RTP address		    */
     pj_sockaddr		rem_rtcp;   /**< Optional remote RTCP address. If
 					 sin_family is zero, the RTP address
@@ -296,6 +297,22 @@ PJ_DECL(pjmedia_transport*) pjmedia_stream_get_transport(pjmedia_stream *st);
  */
 PJ_DECL(pj_status_t) pjmedia_stream_start(pjmedia_stream *stream);
 
+
+/**
+ * Modify the stream's codec parameter after the codec is opened.
+ * Note that not all codec parameters can be modified during run-time.
+ * Currently, only Opus codec supports changing key codec parameters
+ * such as bitrate and bandwidth, while other codecs may only be able to
+ * modify minor settings such as VAD or PLC.
+ *
+ * @param stream	The media stream.
+ * @param param		The new codec parameter.
+ *
+ * @return		PJ_SUCCESS on success.
+ */
+PJ_DECL(pj_status_t)
+pjmedia_stream_modify_codec_param(pjmedia_stream *stream,
+			  	  const pjmedia_codec_param *param);
 
 /**
  * Get the stream info.

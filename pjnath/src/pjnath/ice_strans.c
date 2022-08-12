@@ -208,6 +208,8 @@ struct pj_ice_strans
 
     pj_ice_strans_state	     state;	/**< Session state.		*/
     pj_ice_sess		    *ice;	/**< ICE session.		*/
+    pj_ice_sess		    *ice_prev;	/**< Previous ICE session.	*/
+    pj_grp_lock_handler	     ice_prev_hndlr; /**< Handler of prev ICE	*/
     pj_time_val		     start_time;/**< Time when ICE was started	*/
 
     unsigned		     comp_cnt;	/**< Number of components.	*/
@@ -985,6 +987,12 @@ static void ice_st_on_destroy(void *obj)
 {
     pj_ice_strans *ice_st = (pj_ice_strans*)obj;
 
+    /* Destroy any previous ICE session */
+    if (ice_st->ice_prev) {
+	(*ice_st->ice_prev_hndlr)(ice_st->ice_prev);
+	ice_st->ice_prev = NULL;
+    }
+
     PJ_LOG(4,(ice_st->obj_name, "ICE stream transport %p destroyed", obj));
 
     /* Done */
@@ -1016,8 +1024,9 @@ static void destroy_ice_st(pj_ice_strans *ice_st)
 
     /* Destroy ICE if we have ICE */
     if (ice_st->ice) {
-	pj_ice_sess_destroy(ice_st->ice);
+	pj_ice_sess *ice = ice_st->ice;
 	ice_st->ice = NULL;
+	pj_ice_sess_destroy(ice);
     }
 
     /* Destroy all components */
@@ -1278,6 +1287,15 @@ PJ_DEF(pj_status_t) pj_ice_strans_init_ice(pj_ice_strans *ice_st,
     ice_cb.on_ice_complete = &on_ice_complete;
     ice_cb.on_rx_data = &ice_rx_data;
     ice_cb.on_tx_pkt = &ice_tx_pkt;
+
+    /* Release the pool of previous ICE session to avoid memory bloat,
+     * as otherwise it will only be released after ICE strans is destroyed
+     * (due to group lock).
+     */
+    if (ice_st->ice_prev) {
+	(*ice_st->ice_prev_hndlr)(ice_st->ice_prev);
+	ice_st->ice_prev = NULL;
+    }
 
     /* Create! */
     status = pj_ice_sess_create(&ice_st->cfg.stun_cfg, ice_st->obj_name, role,
@@ -1726,8 +1744,10 @@ PJ_DEF(pj_status_t) pj_ice_strans_stop_ice(pj_ice_strans *ice_st)
     pj_grp_lock_acquire(ice_st->grp_lock);
 
     if (ice_st->ice) {
-	pj_ice_sess_destroy(ice_st->ice);
+	ice_st->ice_prev = ice_st->ice;
 	ice_st->ice = NULL;
+	pj_ice_sess_detach_grp_lock(ice_st->ice_prev, &ice_st->ice_prev_hndlr);
+	pj_ice_sess_destroy(ice_st->ice_prev);
     }
 
     ice_st->state = PJ_ICE_STRANS_STATE_INIT;
@@ -1749,7 +1769,7 @@ static pj_status_t use_buffer( pj_ice_strans *ice_st,
     pj_status_t status;
 
     /* Allocate send buffer, if necessary. */
-    status = alloc_send_buf(ice_st, data_len);
+    status = alloc_send_buf(ice_st, (unsigned)data_len);
     if (status != PJ_SUCCESS)
     	return status;
     
@@ -1830,7 +1850,7 @@ static pj_status_t send_data(pj_ice_strans *ice_st,
      * failure, it will fallback to sending with the default candidate
      * selected during initialization.
      *
-     * https://trac.pjsip.org/repos/ticket/1416:
+     * https://github.com/pjsip/pjproject/issues/1416:
      * Once ICE has failed, also send data with the default candidate.
      */
     if (ice_st->ice && ice_st->state <= PJ_ICE_STRANS_STATE_RUNNING) {
@@ -1856,7 +1876,7 @@ static pj_status_t send_data(pj_ice_strans *ice_st,
 				    PJ_STUN_SESS_LOG_RX_IND)
 	    };
 
-	    /* https://trac.pjsip.org/repos/ticket/1316 */
+	    /* https://github.com/pjsip/pjproject/issues/1316 */
 	    if (comp->turn[tp_idx].sock == NULL) {
 		/* TURN socket error */
 		status = PJ_EINVALIDOP;

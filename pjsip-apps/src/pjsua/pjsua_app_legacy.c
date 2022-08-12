@@ -290,12 +290,12 @@ static void keystroke_help()
     puts("+=============================================================================+");
     puts("|       Call Commands:         |   Buddy, IM & Presence:  |     Account:      |");
     puts("|                              |                          |                   |");
-    puts("|  m  Make new call            | +b  Add new buddy       .| +a  Add new accnt |");
+    puts("|  m  Make new call            | +b  Add new buddy        | +a  Add new accnt.|");
     puts("|  M  Make multiple calls      | -b  Delete buddy         | -a  Delete accnt. |");
     puts("|  a  Answer call              |  i  Send IM              | !a  Modify accnt. |");
     puts("|  h  Hangup call  (ha=all)    |  s  Subscribe presence   | rr  (Re-)register |");
     puts("|  H  Hold call                |  u  Unsubscribe presence | ru  Unregister    |");
-    puts("|  v  re-inVite (release hold) |  t  ToGgle Online status |  >  Cycle next ac.|");
+    puts("|  v  re-inVite (release hold) |  t  Toggle online status |  >  Cycle next ac.|");
     puts("|  U  send UPDATE              |  T  Set online status    |  <  Cycle prev ac.|");
     puts("| ],[ Select next/prev call    +--------------------------+-------------------+");
     puts("|  x  Xfer call                |      Media Commands:     |  Status & Config: |");
@@ -359,7 +359,7 @@ static void vid_show_help()
     puts("| vid win show|hide ID      Show/hide the specified video window ID           |");
     puts("| vid win move ID X Y       Move window ID to position X,Y                    |");
     puts("| vid win resize ID w h     Resize window ID to the specified width, height   |");
-    puts("| vid win full on|off ID    Set fullscreen on/off for window ID               |");
+    puts("| vid win full off|on|dt ID Set fullscreen off/on/desktop for window ID	|");
     puts("| vid conf list             List all video ports in video conference bridge   |");
     puts("| vid conf cc P Q           Connect port P to Q in the video conf bridge      |");
     puts("| vid conf cd P Q           Disconnect port P to Q in the video conf bridge   |");
@@ -566,8 +566,12 @@ static void vid_handle_menu(char *menuin)
 	} else if (argc==5 && (strcmp(argv[2], "full")==0))
 	{
 	    pjsua_vid_win_id wid = atoi(argv[4]);
-	    pj_bool_t fullscreen = (strcmp(argv[3], "on")==0);
-	    status = pjsua_vid_win_set_fullscreen(wid, fullscreen);
+	    pjmedia_vid_dev_fullscreen_flag mode = PJMEDIA_VID_DEV_WINDOWED;
+	    if (strcmp(argv[3], "on")==0)
+		mode = PJMEDIA_VID_DEV_FULLSCREEN;
+	    else if (strcmp(argv[3], "dt")==0)
+		mode = PJMEDIA_VID_DEV_FULLSCREEN_DESKTOP;
+	    status = pjsua_vid_win_set_fullscreen(wid, mode);
 	} else
 	    goto on_error;
 
@@ -677,7 +681,7 @@ static void vid_handle_menu(char *menuin)
 	    } else {
 		unsigned i;
 		printf(" Video conference has %d ports:\n", count);
-		printf(" id name                   format               rx           tx    \n");
+		printf(" id name                   format               rx-from      tx-to \n");
 		printf(" ------------------------------------------------------------------\n");
 		for (i=0; i<count; ++i) {
 		    char li_list[PJSUA_MAX_CALLS*4];
@@ -1106,7 +1110,7 @@ static void ui_add_account(pjsua_transport_config *rtp_cfg)
     acc_cfg.id = pj_str(id);
     acc_cfg.reg_uri = pj_str(registrar);
     acc_cfg.cred_count = 1;
-    acc_cfg.cred_info[0].scheme = pj_str("Digest");
+    acc_cfg.cred_info[0].scheme = pjsip_DIGEST_STR;
     acc_cfg.cred_info[0].realm = pj_str(realm);
     acc_cfg.cred_info[0].username = pj_str(uname);
     acc_cfg.cred_info[0].data_type = 0;

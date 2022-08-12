@@ -81,6 +81,17 @@ struct AccountRegConfig : public PersistentObject
     string	    	contactParams;
 
     /**
+     * Additional parameters that will be appended in the Contact URI
+     * of the registration requests. This will be appended after
+     * \a AccountSipConfig.contactUriParams;
+     *
+     * The parameters should be preceeded by semicolon, and all strings must
+     * be properly escaped. Example:
+     *	 ";my-param=X;another-param=Hi%20there"
+     */
+    string	    	contactUriParams;
+
+    /**
      * Optional interval for registration, in seconds. If the value is zero,
      * default interval will be used (PJSUA_REG_INTERVAL, 300 seconds).
      */
@@ -477,6 +488,20 @@ struct AccountNatConfig : public PersistentObject
     pjsua_stun_use 	mediaStunUse;
 
     /**
+     * Control the use of UPnP for the SIP signaling.
+     *
+     * Default: PJSUA_UPNP_USE_DEFAULT
+     */
+    pjsua_upnp_use 	sipUpnpUse;
+
+    /**
+     * Control the use of UPnP for the media transports.
+     *
+     * Default: PJSUA_UPNP_USE_DEFAULT
+     */
+    pjsua_upnp_use 	mediaUpnpUse;
+
+    /**
      * Specify NAT64 options.
      *
      * Default: PJSUA_NAT64_DISABLED
@@ -707,6 +732,8 @@ public:
      */
     AccountNatConfig() : sipStunUse(PJSUA_STUN_USE_DEFAULT),
       mediaStunUse(PJSUA_STUN_USE_DEFAULT),
+      sipUpnpUse(PJSUA_UPNP_USE_DEFAULT),
+      mediaUpnpUse(PJSUA_UPNP_USE_DEFAULT),
       nat64Opt(PJSUA_NAT64_DISABLED),
       iceEnabled(false),
       iceTrickle(PJ_ICE_SESS_TRICKLE_DISABLED),
@@ -774,7 +801,7 @@ public:
     pjmedia_srtp_crypto toPj() const;
 };
 
-/* Array of SRTP cryptos. */
+/** Array of SRTP cryptos. */
 typedef std::vector<SrtpCrypto> SrtpCryptoVector;
 
 /**
@@ -877,7 +904,7 @@ public:
     pjmedia_rtcp_fb_cap toPj() const;
 };
 
-/* Array of RTCP Feedback capabilities. */
+/** Array of RTCP Feedback capabilities. */
 typedef std::vector<RtcpFbCap> RtcpFbCapVector;
 
 
@@ -942,6 +969,12 @@ struct AccountMediaConfig : public PersistentObject
 {
     /**
      * Media transport (RTP) configuration.
+     * 
+     * For \a port and \a portRange settings, RTCP port is selected as 
+     * RTP port+1.
+     * Example: \a port=5000, \a portRange=4
+     * - Available ports: 5000, 5002, 5004 (Media/RTP transport)
+     *                    5001, 5003, 5005 (Media/RTCP transport)
      */
     TransportConfig	transportConfig;
 
@@ -1004,6 +1037,31 @@ struct AccountMediaConfig : public PersistentObject
      * RTCP Feedback settings.
      */
     RtcpFbConfig	rtcpFbConfig;
+
+    /**
+     * Enable RTCP Extended Report (RTCP XR).
+     *
+     * Default: PJMEDIA_STREAM_ENABLE_XR
+     */
+    bool		rtcpXrEnabled;
+
+    /**
+     * Use loopback media transport. This may be useful if application
+     * doesn't want PJSUA2 to create real media transports/sockets, such as
+     * when using third party media.
+     *
+     * Default: false
+     */
+    bool		useLoopMedTp;
+
+    /**
+     * Enable local loopback when useLoopMedTp is set to TRUE.
+     * If enabled, packets sent to the transport will be sent back to
+     * the streams attached to the transport.
+     *
+     * Default: false
+     */
+    bool		enableLoopback;
 
 public:
     /**
@@ -1974,7 +2032,6 @@ public:
     virtual void onMwiInfo(OnMwiInfoParam &prm)
     { PJ_UNUSED_ARG(prm); }
 
-
 private:
     friend class Endpoint;
     friend class Buddy;
@@ -1990,7 +2047,6 @@ private:
      * This method is used by Buddy::~Buddy().
      */
     void removeBuddy(Buddy *buddy);
-
 
 private:
     pjsua_acc_id 	 id;

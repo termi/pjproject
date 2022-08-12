@@ -97,6 +97,7 @@ PJ_DECL(pj_status_t) pjmedia_avi_dev_create_factory(
  * Allocate one device ID to be used to play the specified AVI file in
  * the parameter.
  *
+ * @param f		The factory.
  * @param param		The parameter, with at least the AVI file path
  * 			set.
  * @param p_id		Optional pointer to receive device ID to play
@@ -113,7 +114,7 @@ PJ_DECL(pj_status_t) pjmedia_avi_dev_alloc(pjmedia_vid_dev_factory *f,
  * Retrieve the parameters set for the virtual device.
  *
  * @param id		Device ID.
- * @param prm		Structure to receive the settings.
+ * @param param		Structure to receive the settings.
  *
  * @return		PJ_SUCCESS or the appropriate error code.
  */

@@ -631,7 +631,7 @@
 #endif
 
 /**
- * Perform RTP payload type checking in the stream. Normally the peer
+ * Perform RTP payload type checking in the audio stream. Normally the peer
  * MUST send RTP with payload type as we specified in our SDP. Certain
  * agents may not be able to follow this hence the only way to have
  * communication is to disable this check.
@@ -1092,7 +1092,7 @@
  * so we recommend to disable this.
  *
  * To enable this, you would require OpenSSL which supports it.
- * See https://trac.pjsip.org/repos/ticket/1943 for more info.
+ * See https://github.com/pjsip/pjproject/issues/1943 for more info.
  *
  * Default: disabled.
  */
@@ -1114,7 +1114,7 @@
  * Enable AES_GCM_256 cryptos in SRTP.
  *
  * To enable this, you would require OpenSSL which supports it.
- * See https://trac.pjsip.org/repos/ticket/1943 for more info. 
+ * See https://github.com/pjsip/pjproject/issues/1943 for more info. 
  *
  * Default: disabled.
  */
@@ -1127,12 +1127,34 @@
  * Enable AES_GCM_128 cryptos in SRTP.
  *
  * To enable this, you would require OpenSSL which supports it.
- * See https://trac.pjsip.org/repos/ticket/1943 for more info.
+ * See https://github.com/pjsip/pjproject/issues/1943 for more info.
  *
  * Default: disabled.
  */
 #ifndef PJMEDIA_SRTP_HAS_AES_GCM_128
 #   define PJMEDIA_SRTP_HAS_AES_GCM_128    	    0
+#endif
+
+
+/**
+ * Specify whether SRTP needs to handle condition that old packets with
+ * incorect RTP seq are still coming when SRTP is restarted.
+ *
+ * Default: enabled.
+ */
+#ifndef PJMEDIA_SRTP_CHECK_RTP_SEQ_ON_RESTART
+#   define PJMEDIA_SRTP_CHECK_RTP_SEQ_ON_RESTART    1
+#endif
+
+
+/**
+ * Specify whether SRTP needs to handle condition that remote may reset
+ * or maintain ROC when SRTP is restarted.
+ *
+ * Default: enabled.
+ */
+#ifndef PJMEDIA_SRTP_CHECK_ROC_ON_RESTART
+#   define PJMEDIA_SRTP_CHECK_ROC_ON_RESTART        1
 #endif
 
 
@@ -1194,7 +1216,7 @@
  * Maximum size in bytes of storage buffer of a transport specific info.
  */
 #ifndef PJMEDIA_TRANSPORT_SPECIFIC_INFO_MAXSIZE
-#   define PJMEDIA_TRANSPORT_SPECIFIC_INFO_MAXSIZE  (36*sizeof(long))
+#   define PJMEDIA_TRANSPORT_SPECIFIC_INFO_MAXSIZE  (50*sizeof(long))
 #endif
 
 
@@ -1642,6 +1664,18 @@
 #   define PJMEDIA_VID_STREAM_DECODE_MIN_DELAY_MSEC	    100
 #endif
 
+
+/**
+ * Perform RTP payload type checking in the video stream. Normally the peer
+ * MUST send RTP with payload type as we specified in our SDP. Certain
+ * agents may not be able to follow this hence the only way to have
+ * communication is to disable this check.
+ *
+ * Default: PJMEDIA_STREAM_CHECK_RTP_PT (follow audio stream's setting)
+ */
+#ifndef PJMEDIA_VID_STREAM_CHECK_RTP_PT
+#   define PJMEDIA_VID_STREAM_CHECK_RTP_PT	PJMEDIA_STREAM_CHECK_RTP_PT
+#endif
 
 /**
  * @}

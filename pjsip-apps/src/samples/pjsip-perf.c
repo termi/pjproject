@@ -460,11 +460,10 @@ static pj_bool_t mod_call_on_rx_request(pjsip_rx_data *rdata)
 		pjsip_response_addr res_addr;
 
 		pjsip_get_response_addr(tdata->pool, rdata, &res_addr);
-		pjsip_endpt_send_response(app.sip_endpt, &res_addr, tdata, 
+		status = pjsip_endpt_send_response(app.sip_endpt, &res_addr, tdata, 
 					  NULL, NULL);
-
+		if (status != PJ_SUCCESS) pjsip_tx_data_dec_ref(tdata);
 	    } else {
-
 		/* Respond with 500 (Internal Server Error) */
 		pjsip_endpt_respond_stateless(app.sip_endpt, rdata, 500, NULL,
 					      NULL, NULL);
@@ -1759,7 +1758,7 @@ int main(int argc, char *argv[])
 	pj_ansi_snprintf(
 	    report, sizeof(report),
 	    "Total %d %s sent in %d ms at rate of %d/sec\n"
-	    "Total %d responses receieved in %d ms at rate of %d/sec:",
+	    "Total %d responses received in %d ms at rate of %d/sec:",
 	    app.client.job_submitted, test_type, msec_req, 
 	    app.client.job_submitted * 1000 / msec_req,
 	    app.client.total_responses, msec_res,

@@ -260,17 +260,25 @@ PJ_DEF(void) pj_grp_lock_config_default(pj_grp_lock_config *cfg)
 static void grp_lock_set_owner_thread(pj_grp_lock_t *glock)
 {
     if (!glock->owner) {
+#if PJ_HAS_THREADS
 	glock->owner = pj_thread_this();
+#else
+        glock->owner = (pj_thread_t *) -1;
+#endif
 	glock->owner_cnt = 1;
     } else {
+#if PJ_HAS_THREADS
 	pj_assert(glock->owner == pj_thread_this());
+#endif
 	glock->owner_cnt++;
     }
 }
 
 static void grp_lock_unset_owner_thread(pj_grp_lock_t *glock)
 {
+#if PJ_HAS_THREADS
     pj_assert(glock->owner == pj_thread_this());
+#endif
     pj_assert(glock->owner_cnt > 0);
     if (--glock->owner_cnt <= 0) {
 	glock->owner = NULL;
@@ -462,6 +470,7 @@ PJ_DEF(pj_status_t) pj_grp_lock_create_w_handler( pj_pool_t *pool,
 
     status = pj_grp_lock_create(pool, cfg, p_grp_lock);
     if (status == PJ_SUCCESS) {
+	pj_pool_t *pool = (*p_grp_lock)->pool;
         grp_lock_add_handler(*p_grp_lock, pool, member, handler, PJ_FALSE);
     }
     

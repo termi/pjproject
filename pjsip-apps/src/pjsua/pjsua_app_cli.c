@@ -796,7 +796,7 @@ static pj_status_t cmd_add_account(pj_cli_cmd_val *cval)
     acc_cfg.id = cval->argv[1];
     acc_cfg.reg_uri = cval->argv[2];
     acc_cfg.cred_count = 1;
-    acc_cfg.cred_info[0].scheme = pj_str("Digest");
+    acc_cfg.cred_info[0].scheme = pjsip_DIGEST_STR;
     acc_cfg.cred_info[0].realm = cval->argv[3];
     acc_cfg.cred_info[0].username = cval->argv[4];
     acc_cfg.cred_info[0].data_type = 0;
@@ -2502,7 +2502,7 @@ static pj_status_t cmd_vid_conf_list()
     }
 
     PJ_LOG(3,(THIS_FILE," Video conference has %d ports:\n", count));
-    PJ_LOG(3,(THIS_FILE," id name                   format               rx           tx    \n"));
+    PJ_LOG(3,(THIS_FILE," id name                   format               rx-from      tx-to \n"));
     PJ_LOG(3,(THIS_FILE," ------------------------------------------------------------------\n"));
     for (i=0; i<count; ++i) {
 	char li_list[PJSUA_MAX_CALLS*4];

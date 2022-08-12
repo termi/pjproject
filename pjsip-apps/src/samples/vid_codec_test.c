@@ -23,9 +23,9 @@
  *
  * Video codec encode and decode test.
  *
- * This file is pjsip-apps/src/samples/vid_vodec_test.c
+ * This file is pjsip-apps/src/samples/vid_codec_test.c
  *
- * \includelineno vid_vodec_test.c
+ * \includelineno vid_codec_test.c
  */
 
 #include <pjlib.h>
@@ -175,11 +175,14 @@ static void diff_file()
 	fseek(fhnd, 0, SEEK_SET);
 
 	buf[i] = (pj_uint8_t*)malloc(size[i] + 4);
-	if (!buf[i])
+	if (!buf[i]){
+	    fclose(fhnd);
 	    return;
+	}
 
 	if (fread (buf[i], 1, size[i], fhnd) != (unsigned)size[i]) {
 	    fprintf (stderr, "Unable to read whole file\n");
+	    fclose(fhnd);
 	    return;
 	}
 
@@ -345,7 +348,7 @@ int main(int argc, char *argv[])
 						         &codec_info, NULL);
 	if (status != PJ_SUCCESS) {
 	    printf("Error: unable to find codec %s\n", codec_id);
-	    return 1;
+	    goto on_exit;
 	}
     } else {
         static pjmedia_vid_codec_info info[1];

@@ -80,6 +80,14 @@ struct pjsua_call_media
 					 bit 0/LSB : sequence flag
 					 bit 1     : timestamp flag 	    */
 
+    pjmedia_type	    	prev_type;     /**< Previous media type     */
+    pjmedia_stream_info	    	prev_aud_si;   /**< Prev audio stream info  */
+    pjmedia_vid_stream_info 	prev_vid_si;   /**< Prev video stream info  */
+    pj_bool_t	    	    	prev_srtp_use; /**< Prev SRTP use 	    */
+    pjmedia_srtp_info	    	prev_srtp_info;/**< Prev SRTP transport info*/
+    pj_bool_t	    	    	prev_ice_use;  /**< Prev ICE use            */
+    pjmedia_ice_transport_info 	prev_ice_info; /**< Prev ICE transport info */
+
     pjmedia_transport	*tp;        /**< Current media transport (can be 0) */
     pj_status_t		 tp_ready;  /**< Media transport status.	    */
     pj_status_t		 tp_result; /**< Media transport creation result.   */
@@ -93,6 +101,9 @@ struct pjsua_call_media
 					    address)			    */
     pjmedia_srtp_use	 rem_srtp_use; /**< Remote's SRTP usage policy.	    */
     pj_timestamp	 last_req_keyframe;/**< Last TX keyframe request.   */
+
+    pj_bool_t		 use_upnp;  /**< Use UPnP?			    */
+    pj_sockaddr		 mapped_addr[2]; /* UPnP mapped address.	    */
 
     pjsua_med_tp_state_cb      med_init_cb;/**< Media transport
                                                 initialization callback.    */
@@ -305,6 +316,7 @@ typedef struct pjsua_acc
                                            2: acknowledged by servers   */
     pj_str_t	     rfc5626_instprm;/**< SIP outbound instance param.  */
     pj_str_t         rfc5626_regprm;/**< SIP outbound reg param.        */
+    unsigned         rfc5626_flowtmr;/**< SIP outbound flow timer.      */
 
     unsigned	     cred_cnt;	    /**< Number of credentials.		*/
     pjsip_cred_info  cred[PJSUA_ACC_MAX_PROXIES]; /**< Complete creds.	*/
@@ -333,6 +345,7 @@ typedef struct pjsua_transport_data
     int			     index;
     pjsip_transport_type_e   type;
     pjsip_host_port	     local_name;
+    pj_sockaddr		     pub_addr;
 
     union {
 	pjsip_transport	    *tp;
@@ -498,6 +511,9 @@ struct pjsua_data
     unsigned		 stun_opt;  /**< STUN resolution option.	*/
     pj_dns_resolver	*resolver;  /**< DNS resolver.			*/   
 
+    /* UPnP */
+    pj_status_t		 upnp_status; /**< UPnP status.			*/
+
     /* Detected NAT type */
     pj_stun_nat_type	 nat_type;	/**< NAT type.			*/
     pj_status_t		 nat_status;	/**< Detection status.		*/
@@ -656,6 +672,24 @@ PJ_INLINE(pj_bool_t) PJSUA_LOCK_IS_LOCKED()
     return pjsua_var.mutex_owner == pj_thread_this();
 }
 
+/* Release all locks currently held by this thread. */
+PJ_INLINE(unsigned) PJSUA_RELEASE_LOCK()
+{
+    unsigned num_locks = 0;
+    while (PJSUA_LOCK_IS_LOCKED()) {
+        num_locks++;
+        PJSUA_UNLOCK();
+    }
+    return num_locks;
+}
+
+/* Re-acquire all the locks released by PJSUA_RELEASE_LOCK(). */
+PJ_INLINE(void) PJSUA_RELOCK(unsigned num_locks)
+{
+    for (; num_locks > 0; num_locks--)
+        PJSUA_LOCK();
+}
+
 #else
 #define PJSUA_LOCK()
 #define PJSUA_TRY_LOCK()	PJ_SUCCESS
@@ -682,6 +716,10 @@ pj_status_t normalize_route_uri(pj_pool_t *pool, pj_str_t *uri);
 /* acc use stun? */
 pj_bool_t pjsua_sip_acc_is_using_stun(pjsua_acc_id acc_id);
 pj_bool_t pjsua_media_acc_is_using_stun(pjsua_acc_id acc_id);
+
+/* acc use UPnP? */
+pj_bool_t pjsua_sip_acc_is_using_upnp(pjsua_acc_id acc_id);
+pj_bool_t pjsua_media_acc_is_using_upnp(pjsua_acc_id acc_id);
 
 /* acc use IPv6? */
 pj_bool_t pjsua_sip_acc_is_using_ipv6(pjsua_acc_id acc_id);
@@ -755,7 +793,7 @@ pj_status_t call_media_on_event(pjmedia_event *event,
 /**
  * Init presence.
  */
-pj_status_t pjsua_pres_init();
+pj_status_t pjsua_pres_init(void);
 
 /*
  * Start presence subsystem.
@@ -904,7 +942,7 @@ pj_status_t pjsua_aud_channel_update(pjsua_call_media *call_med,
                                      pjmedia_stream_info *si,
 				     const pjmedia_sdp_session *local_sdp,
 				     const pjmedia_sdp_session *remote_sdp);
-void pjsua_check_snd_dev_idle();
+void pjsua_check_snd_dev_idle(void);
 
 /*
  * Video

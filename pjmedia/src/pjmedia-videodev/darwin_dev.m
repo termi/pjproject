@@ -148,6 +148,8 @@ struct darwin_stream
     AVCaptureVideoPreviewLayer  *prev_layer;
     
 #if TARGET_OS_IPHONE
+    pj_bool_t		 is_running;
+    pj_bool_t		 is_rendering;
     void		*render_buf;
     pj_size_t		 render_buf_size;
     CGDataProviderRef    render_data_provider;
@@ -268,6 +270,24 @@ pjmedia_vid_dev_factory* pjmedia_darwin_factory(pj_pool_factory *pf)
 /* API: init factory */
 static pj_status_t darwin_factory_init(pjmedia_vid_dev_factory *f)
 {
+    return darwin_factory_refresh(f);
+}
+
+/* API: destroy factory */
+static pj_status_t darwin_factory_destroy(pjmedia_vid_dev_factory *f)
+{
+    struct darwin_factory *qf = (struct darwin_factory*)f;
+    pj_pool_t *pool = qf->pool;
+
+    qf->pool = NULL;
+    pj_pool_release(pool);
+
+    return PJ_SUCCESS;
+}
+
+/* API: refresh the list of devices */
+static pj_status_t darwin_factory_refresh(pjmedia_vid_dev_factory *f)
+{
     struct darwin_factory *qf = (struct darwin_factory*)f;
     struct darwin_dev_info *qdi;
     unsigned i, l, first_idx, front_idx = -1;
@@ -305,6 +325,9 @@ static pj_status_t darwin_factory_init(pjmedia_vid_dev_factory *f)
     	    AVCaptureDeviceDiscoverySession *dds;
 	    NSArray<AVCaptureDeviceType> *dev_types =
 	    	@[AVCaptureDeviceTypeBuiltInWideAngleCamera
+#if TARGET_OS_OSX && defined(__MAC_10_15)
+	    	  , AVCaptureDeviceTypeExternalUnknown
+#endif
 #if TARGET_OS_IPHONE && defined(__IPHONE_10_0)
 	    	  , AVCaptureDeviceTypeBuiltInDuoCamera
 	    	  , AVCaptureDeviceTypeBuiltInTelephotoCamera
@@ -433,25 +456,6 @@ static pj_status_t darwin_factory_init(pjmedia_vid_dev_factory *f)
     return PJ_SUCCESS;
 }
 
-/* API: destroy factory */
-static pj_status_t darwin_factory_destroy(pjmedia_vid_dev_factory *f)
-{
-    struct darwin_factory *qf = (struct darwin_factory*)f;
-    pj_pool_t *pool = qf->pool;
-
-    qf->pool = NULL;
-    pj_pool_release(pool);
-
-    return PJ_SUCCESS;
-}
-
-/* API: refresh the list of devices */
-static pj_status_t darwin_factory_refresh(pjmedia_vid_dev_factory *f)
-{
-    PJ_UNUSED_ARG(f);
-    return PJ_SUCCESS;
-}
-
 /* API: get number of devices */
 static unsigned darwin_factory_get_dev_count(pjmedia_vid_dev_factory *f)
 {
@@ -510,9 +514,10 @@ static pj_status_t darwin_factory_default_param(pj_pool_t *pool,
 @implementation VOutDelegate
 #if TARGET_OS_IPHONE
 - (void)update_image
-{    
+{
     NSAutoreleasePool *pool = [[NSAutoreleasePool alloc] init];
     CGColorSpaceRef colorSpace = CGColorSpaceCreateDeviceRGB();
+
     CGImageRef cgIm = CGImageCreate(stream->size.w, stream->size.h,
                                     8, 32, stream->bytes_per_row, colorSpace,
                                     kCGImageAlphaFirst |
@@ -525,11 +530,29 @@ static pj_status_t darwin_factory_default_param(pj_pool_t *pool,
     CGImageRelease(cgIm);
 
     [pool release];
+    stream->is_rendering = PJ_FALSE;
 }
+
+- (void)finish_render
+{
+    /* Do nothing. This function is serialized in the main thread, so when
+     * it is called, we can be sure that update_image() has completed.
+     */
+}
+
 #endif
 
 - (void)session_runtime_error:(NSNotification *)notification
 {
+    // This function is called from NSNotificationCenter.
+    // Make sure the thread is registered.
+    if (!pj_thread_is_registered()) {
+        pj_thread_t *thread;
+        static pj_thread_desc thread_desc;
+        pj_bzero(thread_desc, sizeof(pj_thread_desc));
+        pj_thread_register("NSNotificationCenter", thread_desc, &thread);
+    }
+
     NSError *error = notification.userInfo[AVCaptureSessionErrorKey];
     PJ_LOG(3, (THIS_FILE, "Capture session runtime error: %s, %s",
     	       [error.localizedDescription UTF8String],
@@ -1300,14 +1323,14 @@ static pj_status_t darwin_stream_start(pjmedia_vid_dev_stream *strm)
 {
     struct darwin_stream *stream = (struct darwin_stream*)strm;
 
-    PJ_UNUSED_ARG(stream);
-
     PJ_LOG(4, (THIS_FILE, "Starting Darwin video stream"));
 
+    stream->is_running = PJ_TRUE;
+
     if (stream->cap_session) {
-        dispatch_sync_on_main_queue(^{
-            [stream->cap_session startRunning];
-        });
+        [stream->cap_session
+            performSelectorOnMainThread:@selector(startRunning)
+            withObject:nil waitUntilDone:YES];
     
 	if (![stream->cap_session isRunning]) {
 	    /* More info about the error should be reported in
@@ -1335,16 +1358,23 @@ static pj_status_t darwin_stream_put_frame(pjmedia_vid_dev_stream *strm,
      */
     if (frame->size==0 || frame->buf==NULL)
 	return PJ_SUCCESS;
-	
+
+    if (!stream->is_running)
+	return PJ_EINVALIDOP;
+    
+    /* Prevent more than one async rendering task. */
+    if (stream->is_rendering)
+    	return PJ_EIGNORED;
+
     if (stream->frame_size >= frame->size)
         pj_memcpy(stream->render_buf, frame->buf, frame->size);
     else
         pj_memcpy(stream->render_buf, frame->buf, stream->frame_size);
     
-    /* Perform video display in a background thread */
-    dispatch_sync_on_main_queue(^{
-        [stream->vout_delegate update_image];
-    });
+    /* Perform video display in the main thread */
+    stream->is_rendering = PJ_TRUE;
+    [stream->vout_delegate performSelectorOnMainThread:@selector(update_image)
+                           withObject:nil waitUntilDone:NO];
 #endif
 
     return PJ_SUCCESS;
@@ -1360,10 +1390,16 @@ static pj_status_t darwin_stream_stop(pjmedia_vid_dev_stream *strm)
     
     PJ_LOG(4, (THIS_FILE, "Stopping Darwin video stream"));
 
-    dispatch_sync_on_main_queue(^{
-        [stream->cap_session stopRunning];
-    });
+    [stream->cap_session performSelectorOnMainThread:@selector(stopRunning)
+                         withObject:nil waitUntilDone:YES];
     stream->has_image = PJ_FALSE;
+    stream->is_running = PJ_FALSE;
+
+#if TARGET_OS_IPHONE
+    /* Wait until the rendering finishes */
+    [stream->vout_delegate performSelectorOnMainThread:@selector(finish_render)
+                           withObject:nil waitUntilDone:YES];
+#endif
     
     return PJ_SUCCESS;
 }
@@ -1400,27 +1436,26 @@ static pj_status_t darwin_stream_destroy(pjmedia_vid_dev_stream *strm)
 
 #if TARGET_OS_IPHONE
     if (stream->prev_layer) {
-        CALayer *prev_layer = stream->prev_layer;
-        dispatch_sync_on_main_queue(^{
-            [prev_layer removeFromSuperlayer];
-            [prev_layer release];
-        });
+    	[stream->prev_layer
+    	    performSelectorOnMainThread:@selector(removeFromSuperlayer)
+            withObject:nil waitUntilDone:YES];
+        [stream->prev_layer release];
         stream->prev_layer = nil;
     }
     
     if (stream->render_view) {
-        UIView *view = stream->render_view;
-        dispatch_sync_on_main_queue(^{
-            [view removeFromSuperview];
-            [view release];
-        });
+    	[stream->render_view
+    	    performSelectorOnMainThread:@selector(removeFromSuperview)
+            withObject:nil waitUntilDone:YES];
+
+        [stream->render_view release];
         stream->render_view = nil;
     }
     
     if (stream->render_data_provider) {
         CGDataProviderRelease(stream->render_data_provider);
         stream->render_data_provider = nil;
-    }
+    }    
 #endif /* TARGET_OS_IPHONE */
 
     if (stream->queue) {

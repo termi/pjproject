@@ -356,13 +356,13 @@ PJ_DEF(pjsip_msg*) pjsip_msg_clone( pj_pool_t *pool, const pjsip_msg *src)
     return dst;
 }
 
-PJ_DEF(void*)  pjsip_msg_find_hdr( const pjsip_msg *msg, 
-				   pjsip_hdr_e hdr_type, const void *start)
+PJ_DEF(void*)  pjsip_hdr_find( const void *hdr_list,
+			       pjsip_hdr_e hdr_type, const void *start)
 {
-    const pjsip_hdr *hdr=(const pjsip_hdr*) start, *end=&msg->hdr;
+    const pjsip_hdr *hdr=(const pjsip_hdr*) start, *end=hdr_list;
 
     if (hdr == NULL) {
-	hdr = msg->hdr.next;
+	hdr = end->next;
     }
     for (; hdr!=end; hdr = hdr->next) {
 	if (hdr->type == hdr_type)
@@ -371,14 +371,14 @@ PJ_DEF(void*)  pjsip_msg_find_hdr( const pjsip_msg *msg,
     return NULL;
 }
 
-PJ_DEF(void*)  pjsip_msg_find_hdr_by_name( const pjsip_msg *msg, 
-					   const pj_str_t *name, 
-					   const void *start)
+PJ_DEF(void*)  pjsip_hdr_find_by_name( const void *hdr_list,
+				       const pj_str_t *name,
+				       const void *start)
 {
-    const pjsip_hdr *hdr=(const pjsip_hdr*)start, *end=&msg->hdr;
+    const pjsip_hdr *hdr=(const pjsip_hdr*) start, *end=hdr_list;
 
     if (hdr == NULL) {
-	hdr = msg->hdr.next;
+	hdr = end->next;
     }
     for (; hdr!=end; hdr = hdr->next) {
 	if (pj_stricmp(&hdr->name, name) == 0)
@@ -387,15 +387,15 @@ PJ_DEF(void*)  pjsip_msg_find_hdr_by_name( const pjsip_msg *msg,
     return NULL;
 }
 
-PJ_DEF(void*)  pjsip_msg_find_hdr_by_names( const pjsip_msg *msg, 
-					    const pj_str_t *name, 
-					    const pj_str_t *sname,
-					    const void *start)
+PJ_DEF(void*)  pjsip_hdr_find_by_names( const void *hdr_list,
+					const pj_str_t *name,
+					const pj_str_t *sname,
+					const void *start)
 {
-    const pjsip_hdr *hdr=(const pjsip_hdr*)start, *end=&msg->hdr;
+    const pjsip_hdr *hdr=(const pjsip_hdr*) start, *end=hdr_list;
 
     if (hdr == NULL) {
-	hdr = msg->hdr.next;
+	hdr = end->next;
     }
     for (; hdr!=end; hdr = hdr->next) {
 	if (pj_stricmp(&hdr->name, name) == 0)
@@ -404,6 +404,27 @@ PJ_DEF(void*)  pjsip_msg_find_hdr_by_names( const pjsip_msg *msg,
 	    return (void*)hdr;
     }
     return NULL;
+}
+
+PJ_DEF(void*)  pjsip_msg_find_hdr( const pjsip_msg *msg,
+				   pjsip_hdr_e hdr_type, const void *start)
+{
+    return pjsip_hdr_find(&msg->hdr, hdr_type, start);
+}
+
+PJ_DEF(void*)  pjsip_msg_find_hdr_by_name( const pjsip_msg *msg,
+					   const pj_str_t *name,
+					   const void *start)
+{
+    return pjsip_hdr_find_by_name(&msg->hdr, name, start);
+}
+
+PJ_DEF(void*)  pjsip_msg_find_hdr_by_names( const pjsip_msg *msg,
+					    const pj_str_t *name,
+					    const pj_str_t *sname,
+					    const void *start)
+{
+    return pjsip_hdr_find_by_names(&msg->hdr, name, sname, start);
 }
 
 PJ_DEF(void*) pjsip_msg_find_remove_hdr( pjsip_msg *msg, 
@@ -1552,8 +1573,8 @@ static int pjsip_fromto_hdr_print( pjsip_fromto_hdr *hdr,
     const pjsip_parser_const_t *pc = pjsip_parser_const();
 
     copy_advance(buf, (*hname));
-    *buf++ = ':';
-    *buf++ = ' ';
+    copy_advance_char_check(buf, ':');
+    copy_advance_char_check(buf, ' ');
 
     printed = pjsip_uri_print(PJSIP_URI_IN_FROMTO_HDR, hdr->uri, 
 			      buf, endbuf-buf);
@@ -1756,8 +1777,8 @@ static int pjsip_routing_hdr_print( pjsip_routing_hdr *hdr,
     /* Route and Record-Route don't compact forms */
 
     copy_advance(buf, hdr->name);
-    *buf++ = ':';
-    *buf++ = ' ';
+    copy_advance_char_check(buf, ':');
+    copy_advance_char_check(buf, ' ');
 
     printed = pjsip_uri_print(PJSIP_URI_IN_ROUTING_HDR, &hdr->name_addr, buf, 
 			      endbuf-buf);
@@ -2030,8 +2051,8 @@ static int pjsip_via_hdr_print( pjsip_via_hdr *hdr,
 
     /* pjsip_hdr_names */
     copy_advance(buf, (*hname));
-    *buf++ = ':';
-    *buf++ = ' ';
+    copy_advance_char_check(buf, ':');
+    copy_advance_char_check(buf, ' ');
 
     /* SIP/2.0/transport host:port */
     pj_memcpy(buf, sip_ver.ptr, sip_ver.slen);
@@ -2045,7 +2066,7 @@ static int pjsip_via_hdr_print( pjsip_via_hdr *hdr,
 	}
     }
     buf += hdr->transport.slen;
-    *buf++ = ' ';
+    copy_advance_char_check(buf, ' ');
 
     /* Check if host contains IPv6 */
     if (pj_strchr(&hdr->sent_by.host, ':')) {
@@ -2055,7 +2076,7 @@ static int pjsip_via_hdr_print( pjsip_via_hdr *hdr,
     }
 
     if (hdr->sent_by.port != 0) {
-	*buf++ = ':';
+	copy_advance_char_check(buf, ':');
 	printed = pj_utoa(hdr->sent_by.port, buf);
 	buf += printed;
     }
@@ -2076,7 +2097,7 @@ static int pjsip_via_hdr_print( pjsip_via_hdr *hdr,
 	pj_memcpy(buf, ";rport", 6);
 	buf += 6;
 	if (hdr->rport_param > 0) {
-	    *buf++ = '=';
+	    copy_advance_char_check(buf, '=');
 	    buf += pj_utoa(hdr->rport_param, buf);
 	}
     }

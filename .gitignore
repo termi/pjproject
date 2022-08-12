@@ -459,3 +459,11 @@ tests/pjsua/wavs/tmp*.wav
 tests/pjsua/tools/cmp_wav
 tests/pjsua/tools/cmp_wav.dSYM
 tests/pjsua/logs
+# benchmark output
+*bench*.htm
+
+# Doxygen stuff
+*/docs/html/
+*/docs/xml/
+*/docs/latex/
+*/docs/*.tag

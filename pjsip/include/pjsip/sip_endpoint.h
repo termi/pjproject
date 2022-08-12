@@ -437,7 +437,7 @@ PJ_DECL(pj_status_t) pjsip_endpt_set_resolver(pjsip_endpoint *endpt,
  * PJLIB-UTIL DNS resolver if any (e.g: set using #pjsip_endpt_set_resolver()). 
  * Application that needs it, still be able create its own instance. 
  *
- * @param res       The SIP resolver engine.
+ * @param endpt       The SIP resolver engine.
  * @param ext_res   The external resolver implementation callback. This argument
  *		    can be NULL to reset the whole external implementation. 
  *		    However, it is prohibited to reset individual callback.
@@ -689,9 +689,11 @@ PJ_DECL(void) pjsip_endpt_log_error( pjsip_endpoint *endpt,
                                      const char *format,
                                      ... );
 
+/** Internal */
 #define PJSIP_ENDPT_LOG_ERROR(expr)   \
             pjsip_endpt_log_error expr
 
+/** Internal */
 #define PJSIP_ENDPT_TRACE(tracing,expr) \
             do {                        \
                 if ((tracing))          \
@@ -701,9 +703,9 @@ PJ_DECL(void) pjsip_endpt_log_error( pjsip_endpoint *endpt,
 /*
  * Internal functions.
  */
-/*
- * Receive transaction events from transactions and put in the event queue
- * to be processed later.
+/**
+ * Internal: receive transaction events from transactions and put in the
+ * event queue to be processed later.
  */
 void pjsip_endpt_send_tsx_event( pjsip_endpoint *endpt, pjsip_event *evt );
 

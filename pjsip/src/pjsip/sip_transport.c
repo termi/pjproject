@@ -358,7 +358,8 @@ PJ_DEF(pjsip_transport_type_e) pjsip_transport_get_type_from_name(const pj_str_t
 	}
     }
 
-    pj_assert(!"Invalid transport name");
+    /* Just return instead of raising assertion. */
+    //pj_assert(!"Invalid transport name");
     return PJSIP_TRANSPORT_UNSPECIFIED;
 }
 
@@ -1842,7 +1843,7 @@ PJ_DEF(unsigned) pjsip_tpmgr_get_transport_count(pjsip_tpmgr *mgr)
     itr = pj_hash_first(mgr->table, &itr_val);
     while (itr) {
 	transport *tp_entry = (transport *)pj_hash_this(mgr->table, itr);
-	nr_of_transports += pj_list_size(tp_entry);
+	nr_of_transports += (int)pj_list_size(tp_entry);
 	itr = pj_hash_next(mgr->table, itr);
     }
 
@@ -2074,8 +2075,8 @@ PJ_DEF(pj_ssize_t) pjsip_tpmgr_receive_packet( pjsip_tpmgr *mgr,
 				       pj_exception_id_name(err->except_code),
 				       (int)err->hname.slen, err->hname.ptr,
 				       err->line, err->col);
-		if (len >= (int)sizeof(buf)-tmp.slen) {
-		    len = (int)sizeof(buf)-tmp.slen;
+		if (len >= (int)sizeof(buf)-(int)tmp.slen) {
+		    len = (int)sizeof(buf)-(int)tmp.slen;
 		}
 		if (len > 0) {
 		    tmp.slen += len;

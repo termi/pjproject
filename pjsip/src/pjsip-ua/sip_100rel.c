@@ -318,7 +318,7 @@ PJ_DEF(pj_status_t) pjsip_100rel_create_prack( pjsip_inv_session *inv,
 	return status;
 
     /* If this response is a forked response from a different call-leg,
-     * update the req URI (https://trac.pjsip.org/repos/ticket/1364)
+     * update the req URI (https://github.com/pjsip/pjproject/issues/1364)
      */
     if (pj_stricmp(&uac_state->tag, &dd->inv->dlg->remote.info->tag)) {
 	const pjsip_contact_hdr *mhdr;
@@ -584,7 +584,7 @@ static void on_retransmit(pj_timer_heap_t *timer_heap,
 
 	/* Send 500 response */
 	status = pjsip_inv_end_session(dd->inv, 500, &reason, &tdata);
-	if (status == PJ_SUCCESS) {
+	if (status == PJ_SUCCESS && tdata) {
 	    pjsip_dlg_send_response(dd->inv->dlg, 
 				    dd->inv->invite_tsx,
 				    tdata);

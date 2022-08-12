@@ -225,8 +225,8 @@ typedef struct pj_ice_msg_data
 	    unsigned		     ckid;  /**< Check ID	*/
 	    pj_ice_sess_cand	    *lcand; /**< Local cand	*/
 	    pj_ice_sess_cand	    *rcand; /**< Remote cand	*/
-	} req;
-    } data;
+	} req; /**< Request data */
+    } data; /**< The data */
 
 } pj_ice_msg_data;
 
@@ -860,6 +860,27 @@ PJ_DECL(pj_status_t) pj_ice_sess_get_options(pj_ice_sess *ice,
  */
 PJ_DECL(pj_status_t) pj_ice_sess_set_options(pj_ice_sess *ice,
 					     const pj_ice_sess_options *opt);
+
+
+/**
+ * Detach ICE session from group lock. This will delete ICE session group lock
+ * handler.
+ *
+ * This function is useful when application creates an ICE session with
+ * group lock and later it needs to recreate ICE session (e.g: for ICE
+ * restart) so the previous ICE session resources can be released manually
+ * (by calling the group lock handler) without waiting for the group lock
+ * destroy to avoid memory bloat.
+ *
+ * @param ice		ICE session instance.
+ * @param handler	Pointer to receive the group lock handler of
+ *			this ICE session.
+ *
+ * @return		PJ_SUCCESS on success.
+ */
+PJ_DECL(pj_status_t) pj_ice_sess_detach_grp_lock(pj_ice_sess *ice,
+						 pj_grp_lock_handler *handler);
+
 
 /**
  * Destroy ICE session. This will cancel any connectivity checks currently

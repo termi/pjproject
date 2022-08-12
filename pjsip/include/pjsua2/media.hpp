@@ -697,9 +697,9 @@ typedef std::vector<ToneDigit> ToneDigitVector;
 struct ToneDigitMapDigit
 {
 public:
-    string	digit;
-    int		freq1;
-    int		freq2;
+    string	digit;  /**< the digit        */
+    int		freq1;  /**< first frequency  */
+    int		freq2;  /**< second frequency */
 };
 
 /**
@@ -911,7 +911,6 @@ public:
      * Select or change capture sound device. Application may call this
      * function at any time to replace current sound device. Calling this 
      * method will not change the state of the sound device (opened/closed).
-     * Note that this method will override the mode set by setSndDevMode().
      *
      * @param capture_dev   	Device ID of the capture device.
      */
@@ -921,7 +920,6 @@ public:
      * Select or change playback sound device. Application may call this
      * function at any time to replace current sound device. Calling this 
      * method will not change the state of the sound device (opened/closed).
-     * Note that this method will override the mode set by setSndDevMode().
      *
      * @param playback_dev   	Device ID of the playback device.
      */
@@ -966,8 +964,11 @@ public:
     MediaPort *setNoDev();
 
     /**
-     * Set sound device mode. Note that calling the APIs to set sound device
-     * (setPlaybackDev()/setCaptureDev()) will reset the mode.
+     * Set sound device mode.
+     *
+     * Note that this method will open the sound device, using current
+     * active IDs set via setCaptureDev() or setPlaybackDev(), if the flag
+     * PJSUA_SND_DEV_NO_IMMEDIATE_OPEN is not specified.
      * 
      * @param mode		The sound device mode, as bitmask combination 
      *				of #pjsua_snd_dev_mode
@@ -1683,6 +1684,16 @@ public:
     void stopTransmit(const VideoMedia &sink) const PJSUA2_THROW(Error);
 
     /**
+     * Update or refresh port states from video port info. Some port may
+     * change its port info in the middle of a session, for example when
+     * a video stream decoder learns that incoming video size or frame rate
+     * has changed, video conference needs to be informed to update its
+     * internal states.
+     *
+     */
+    void update() const PJSUA2_THROW(Error);
+
+    /**
      * Default Constructor.
      *
      * Normally application will not create VideoMedia object directly,
@@ -1880,6 +1891,17 @@ public:
      */
     void setFullScreen(bool enabled) PJSUA2_THROW(Error);
 
+    /**
+     * Set video window full-screen. This operation is valid only when the
+     * underlying video device supports PJMEDIA_VID_DEV_CAP_OUTPUT_FULLSCREEN
+     * capability. Currently it is only supported on SDL backend.
+     *
+     * @param mode		Fullscreen mode, see
+     *				pjmedia_vid_dev_fullscreen_flag.
+     */
+    void setFullScreen2(pjmedia_vid_dev_fullscreen_flag mode)
+							PJSUA2_THROW(Error);
+
 private:
     pjsua_vid_win_id		winId;
 };
@@ -1965,7 +1987,7 @@ public:
     /**
      * Start video preview window for the specified capture device.
      *
-     * @param p		Video preview parameters. 
+     * @param param	Video preview parameters.
      */
     void start(const VideoPreviewOpParam &param) PJSUA2_THROW(Error);
 
@@ -1974,7 +1996,7 @@ public:
      */
     void stop() PJSUA2_THROW(Error);
 
-    /*
+    /**
      * Get the preview window handle associated with the capture device,if any.
      */
     VideoWindow getVideoWindow();
@@ -2076,6 +2098,19 @@ struct VideoSwitchParam
  */
 class VidDevManager {
 public:
+
+    /**
+     * Initialize the video device subsystem. This will register all supported
+     * video device factories to the video device subsystem.
+     *
+     * By default, library will initialize video device subsystem automatically
+     * on library initialization, so application will never need to invoke this
+     * function. However, when PJSUA_DONT_INIT_VID_DEV_SUBSYS is set to
+     * non-zero, application should invoke this function before accessing
+     * video device.
+     */
+    void initSubsys() PJSUA2_THROW(Error);
+
     /**
      * Refresh the list of video devices installed in the system. This function
      * will only refresh the list of video device so all active video streams
@@ -2378,8 +2413,8 @@ typedef std::vector<CodecInfo> CodecInfoVector2;
  */
 typedef struct CodecFmtp
 {
-    string name;
-    string val;
+    string name;   /**< name  */
+    string val;    /**< value */
 } CodecFmtp;
 
 /** Array of codec fmtp */
@@ -2396,6 +2431,8 @@ struct CodecParamInfo
     unsigned	maxBps;			/**< Maximum bandwidth in bits/sec  */
     unsigned    maxRxFrameSize;		/**< Maximum frame size             */
     unsigned 	frameLen;		/**< Decoder frame ptime in msec.   */
+    unsigned 	encFrameLen;		/**< Encoder ptime, or zero if it's
+					     equal to decoder ptime.	    */
     unsigned  	pcmBitsPerSample;	/**< Bits/sample in the PCM side    */
     unsigned  	pt;			/**< Payload type.		    */
     pjmedia_format_id fmtId;		/**< Source format, it's format of
@@ -2422,6 +2459,9 @@ struct CodecParamSetting
     bool	reserved;	    /**< Reserved, must be zero.	*/
     CodecFmtpVector encFmtp;	    /**< Encoder's fmtp params.		*/
     CodecFmtpVector decFmtp;	    /**< Decoder's fmtp params.		*/
+    unsigned   	packetLoss;         /**< Encoder's expected pkt loss %.	*/
+    unsigned   	complexity;         /**< Encoder complexity, 0-10(max). */
+    bool  	cbr;                /**< Constant bit rate?		*/
 };
 
 /**
@@ -2429,13 +2469,15 @@ struct CodecParamSetting
  * the capability of audio codec factories.
  *
  * Please note that codec parameter also contains SDP specific setting,
- * #setting::decFmtp and #setting::encFmtp, which may need to be set 
+ * setting::decFmtp and setting::encFmtp, which may need to be set
  * appropriately based on the effective setting. 
  * See each codec documentation for more detail.
  */
 struct CodecParam
 {
+    /** info */
     struct CodecParamInfo info;
+    /** setting */
     struct CodecParamSetting setting;
 
     void fromPj(const pjmedia_codec_param &param);

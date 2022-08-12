@@ -242,6 +242,11 @@ PJ_DEF(void) pjmedia_rtcp_init2( pjmedia_rtcp_session *sess,
     sess->rtcp_rr_pkt.common.pt = RTCP_RR;
     sess->rtcp_rr_pkt.common.length = pj_htons(7);
 
+    /* Copy to RTCP FB common header */
+    pj_memcpy(&sess->rtcp_fb_com, &sr_pkt->common, 
+	      sizeof(pjmedia_rtcp_common));
+    sess->rtcp_fb_com.ssrc_src = 0;
+
     /* Get time and timestamp base and frequency */
     pj_gettimeofday(&now);
     sess->tv_base = now;
@@ -502,12 +507,22 @@ static void parse_rtcp_report( pjmedia_rtcp_session *sess,
 
     /* Parse RTCP */
     if (common->pt == RTCP_SR) {
+        if (sizeof (pjmedia_rtcp_common) + sizeof (pjmedia_rtcp_sr) > size) {
+	    TRACE_((sess->name, "Discarding RTCP SR due to truncated size "
+	    			"%d bytes", size));
+            return;
+        }
 	sr = (pjmedia_rtcp_sr*) (((char*)pkt) + sizeof(pjmedia_rtcp_common));
 	if (common->count > 0 && size >= (sizeof(pjmedia_rtcp_sr_pkt))) {
 	    rr = (pjmedia_rtcp_rr*)(((char*)pkt) + (sizeof(pjmedia_rtcp_common)
 				    + sizeof(pjmedia_rtcp_sr)));
 	}
     } else if (common->pt == RTCP_RR && common->count > 0) {
+	if (sizeof (pjmedia_rtcp_common) + sizeof (pjmedia_rtcp_rr) > size) {
+	    TRACE_((sess->name, "Discarding RTCP RR due to truncated size "
+	    			"%d bytes", size));
+	    return;
+	}
 	rr = (pjmedia_rtcp_rr*)(((char*)pkt) + sizeof(pjmedia_rtcp_common));
 #if defined(PJMEDIA_HAS_RTCP_XR) && (PJMEDIA_HAS_RTCP_XR != 0)
     } else if (common->pt == RTCP_XR) {
@@ -757,8 +772,15 @@ static void parse_rtcp_bye(pjmedia_rtcp_session *sess,
 
     /* Check and get BYE reason */
     if (size > 8) {
+    	/* Make sure the BYE reason does not exceed:
+    	 * - the size of the available buffer
+    	 * - the declared reason's length
+    	 * - the actual packet size
+    	 */
 	reason.slen = PJ_MIN(sizeof(sess->stat.peer_sdes_buf_),
                              *((pj_uint8_t*)pkt+8));
+        reason.slen = PJ_MIN(reason.slen, (pj_ssize_t)(size-9));
+
 	pj_memcpy(sess->stat.peer_sdes_buf_, ((pj_uint8_t*)pkt+9),
 		  reason.slen);
 	reason.ptr = sess->stat.peer_sdes_buf_;
@@ -780,6 +802,12 @@ static void parse_rtcp_fb(pjmedia_rtcp_session *sess,
     //pjmedia_rtcp_fb_rpsi rpsi;
     pjmedia_event ev;
     pj_timestamp ts_now;
+
+    if (size < sizeof(pjmedia_rtcp_fb_common)) {
+        PJ_PERROR(3, (THIS_FILE, PJ_ETOOSMALL,
+                      "Failed parsing RTCP FB, invalid packet length"));
+	return;
+    }    
 
     pj_get_timestamp(&ts_now);
 
@@ -819,12 +847,20 @@ PJ_DEF(void) pjmedia_rtcp_rx_rtcp( pjmedia_rtcp_session *sess,
     p = (pj_uint8_t*)pkt;
     p_end = p + size;
     while (p < p_end) {
-	pjmedia_rtcp_common *common = (pjmedia_rtcp_common*)p;
+	pjmedia_rtcp_common *common;
 	unsigned len;
 
-	len = (pj_ntohs((pj_uint16_t)common->length)+1) * 4;
-	if (p + len > p_end)
+	if (p + sizeof(pjmedia_rtcp_common) > p_end) {
+	    TRACE_((sess->name, "Receiving truncated RTCP packet (1)"));
 	    break;
+	}
+	common = (pjmedia_rtcp_common*)p;
+
+	len = (pj_ntohs((pj_uint16_t)common->length)+1) * 4;
+	if (p + len > p_end) {
+	    TRACE_((sess->name, "Receiving truncated RTCP packet (2)"));
+	    break;
+	}
 
 	switch(common->pt) {
 	case RTCP_SR:

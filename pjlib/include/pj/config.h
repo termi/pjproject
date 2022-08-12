@@ -178,7 +178,6 @@
 #   define PJ_IS_LITTLE_ENDIAN	1
 #   define PJ_IS_BIG_ENDIAN	0
 
-
 #elif defined (PJ_M_X86_64) || defined(__amd64__) || defined(__amd64) || \
 	defined(__x86_64__) || defined(__x86_64) || \
 	defined(_M_X64) || defined(_M_AMD64)
@@ -255,7 +254,8 @@
 #   define PJ_IS_LITTLE_ENDIAN	0
 #   define PJ_IS_BIG_ENDIAN	1
 
-#elif defined(ARM) || defined(_ARM_) ||  defined(__arm__) || defined(_M_ARM)
+#elif defined(ARM) || defined(_ARM_) ||  defined(__arm__) || \
+       defined(_M_ARM) || defined(_M_ARM64) || defined(__aarch64__)
 #   define PJ_HAS_PENTIUM	0
     /*
      * ARM, bi-endian, so raise error if endianness is not configured
@@ -271,6 +271,10 @@
 #	undef PJ_M_ARMV4
 #	define PJ_M_ARMV4		1
 #	define PJ_M_NAME		"armv4"
+#   elif defined (PJ_M_ARM64) || defined(ARM64) || defined(__aarch64__)
+#	undef PJ_M_ARM64
+#	define PJ_M_ARM64		1
+#	define PJ_M_NAME		"arm64"
 #   endif 
 
 #elif defined (PJ_M_POWERPC) || defined(__powerpc) || defined(__powerpc__) || \
@@ -330,7 +334,6 @@
 #   undef FD_SETSIZE
 #   undef PJ_HAS_SEMAPHORE
 #   undef PJ_HAS_EVENT_OBJ
-#   undef PJ_ENABLE_EXTRA_CHECK
 #   undef PJ_EXCEPTION_USE_WIN32_SEH
 #   undef PJ_HAS_ERROR_STRING
 
@@ -546,7 +549,7 @@
  * Enable timer debugging facility. When this is enabled, application
  * can call pj_timer_heap_dump() to show the contents of the timer
  * along with the source location where the timer entries were scheduled.
- * See https://trac.pjsip.org/repos/ticket/1527 for more info.
+ * See https://github.com/pjsip/pjproject/issues/1527 for more info.
  *
  * Default: 1
  */
@@ -742,6 +745,17 @@
 
 
 /**
+ * Default flags for epoll_flags member of  pj_ioqueue_cfg structure.
+ * The values are combination of pj_ioqueue_epoll_flag constants.
+ *
+ * Default: PJ_IOQUEUE_EPOLL_AUTO
+ */
+#ifndef PJ_IOQUEUE_DEFAULT_EPOLL_FLAGS
+#   define PJ_IOQUEUE_DEFAULT_EPOLL_FLAGS PJ_IOQUEUE_EPOLL_AUTO
+#endif
+
+
+/**
  * Determine if FD_SETSIZE is changeable/set-able. If so, then we will
  * set it to PJ_IOQUEUE_MAX_HANDLES. Currently we detect this by checking
  * for Winsock.
@@ -837,22 +851,6 @@
 
 
 /**
- * Enable library's extra check.
- * If this macro is enabled, #PJ_ASSERT_RETURN macro will expand to
- * run-time checking. If this macro is disabled, #PJ_ASSERT_RETURN
- * will simply evaluate to #pj_assert().
- *
- * You can disable this macro to reduce size, at the risk of crashes
- * if invalid value (e.g. NULL) is passed to the library.
- *
- * Default: 1
- */
-#ifndef PJ_ENABLE_EXTRA_CHECK
-#   define PJ_ENABLE_EXTRA_CHECK    1
-#endif
-
-
-/**
  * Enable name registration for exceptions with #pj_exception_id_alloc().
  * If this feature is enabled, then the library will keep track of
  * names associated with each exception ID requested by application via
@@ -927,6 +925,20 @@
  */
 #ifndef PJ_HAS_STRICMP_ALNUM
 #   define PJ_HAS_STRICMP_ALNUM	    0
+#endif
+
+/*
+ * Warn about obsolete macros.
+ *
+ * PJ_ENABLE_EXTRA_CHECK has been deprecated in 2.13.
+ */
+#if defined(PJ_ENABLE_EXTRA_CHECK) && PJ_ENABLE_EXTRA_CHECK==0
+#   ifdef _MSC_VER
+#	pragma message("Warning: PJ_ENABLE_EXTRA_CHECK macro is deprecated"\
+		       " and has no effect")
+#   else
+#	warning "PJ_ENABLE_EXTRA_CHECK macro is deprecated and has no effect"
+#   endif
 #endif
 
 
@@ -1056,7 +1068,7 @@
 
 /**
  * Disable WSAECONNRESET error for UDP sockets on Win32 platforms. See
- * https://trac.pjsip.org/repos/ticket/1197.
+ * https://github.com/pjsip/pjproject/issues/1197.
  *
  * Default: 1
  */
@@ -1395,7 +1407,7 @@ PJ_BEGIN_DECL
 #define PJ_VERSION_NUM_MAJOR	2
 
 /** PJLIB version minor number. */
-#define PJ_VERSION_NUM_MINOR	11
+#define PJ_VERSION_NUM_MINOR	12
 
 /** PJLIB version revision number. */
 #define PJ_VERSION_NUM_REV      0

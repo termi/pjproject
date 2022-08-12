@@ -508,6 +508,9 @@ static pj_status_t factory_default_attr( pjmedia_codec_factory *factory,
     attr->info.pcm_bits_per_sample = 16;
     attr->setting.vad      	   = OPUS_DEFAULT_VAD;
     attr->setting.plc      	   = OPUS_DEFAULT_PLC;
+    attr->setting.packet_loss	   = opus_cfg.packet_loss;
+    attr->setting.complexity	   = opus_cfg.complexity;
+    attr->setting.cbr		   = opus_cfg.cbr;
 
     /* Set max RX frame size to 1275 (max Opus frame size) to anticipate
      * possible ptime change on the fly.
@@ -723,6 +726,7 @@ static pj_status_t  codec_open( pjmedia_codec *codec,
 			    OPUS_APPLICATION_VOIP);
     if (err != OPUS_OK) {
 	PJ_LOG(2, (THIS_FILE, "Unable to create encoder"));
+	pj_mutex_unlock (opus_data->mutex);
 	return PJMEDIA_CODEC_EFAILED;
     }
     
@@ -751,11 +755,13 @@ static pj_status_t  codec_open( pjmedia_codec *codec,
     opus_encoder_ctl(opus_data->enc,
     		     OPUS_SET_VBR(opus_data->cfg.cbr ? 0 : 1));
 
-    PJ_LOG(5, (THIS_FILE, "Initialize Opus encoder, sample rate: %d, "
-    			  "avg bitrate: %d, vad: %d, plc: %d, pkt loss: %d, "
+    PJ_LOG(4, (THIS_FILE, "Initialize Opus encoder, sample rate: %d, "
+    			  "avg bitrate: %d%s, vad: %d, plc: %d, pkt loss: %d, "
     			  "complexity: %d, constant bit rate: %d",
                		  opus_data->cfg.sample_rate,
-               		  attr->info.avg_bps, attr->setting.vad?1:0,
+               		  (auto_bit_rate? 0: attr->info.avg_bps),
+               		  (auto_bit_rate? "(auto)": ""),
+               		  attr->setting.vad?1:0,
                		  attr->setting.plc?1:0,
                		  opus_data->cfg.packet_loss,
                		  opus_data->cfg.complexity,
@@ -767,6 +773,7 @@ static pj_status_t  codec_open( pjmedia_codec *codec,
 			     attr->info.channel_cnt);
     if (err != OPUS_OK) {
 	PJ_LOG(2, (THIS_FILE, "Unable to initialize decoder"));
+	pj_mutex_unlock (opus_data->mutex);
 	return PJMEDIA_CODEC_EFAILED;
     }
 
@@ -823,6 +830,32 @@ static pj_status_t  codec_modify( pjmedia_codec *codec,
     opus_encoder_ctl(opus_data->enc,
     		     OPUS_SET_INBAND_FEC(attr->setting.plc ? 1 : 0));
 
+    /* Set bandwidth */
+    opus_encoder_ctl(opus_data->enc,
+    		     OPUS_SET_MAX_BANDWIDTH(get_opus_bw_constant(
+    					    attr->info.clock_rate)));
+    /* Set expected packet loss */
+    opus_encoder_ctl(opus_data->enc,
+    		     OPUS_SET_PACKET_LOSS_PERC(attr->setting.packet_loss));
+    /* Set complexity */
+    opus_encoder_ctl(opus_data->enc,
+		     OPUS_SET_COMPLEXITY(attr->setting.complexity));
+    /* Set constant bit rate */
+    opus_encoder_ctl(opus_data->enc,
+    		     OPUS_SET_VBR(attr->setting.cbr ? 0 : 1));
+
+    PJ_LOG(4, (THIS_FILE, "Modifying Opus encoder, sample rate: %d, "
+    			  "avg bitrate: %d%s, vad: %d, plc: %d, pkt loss: %d, "
+    			  "complexity: %d, constant bit rate: %d",
+    			  attr->info.clock_rate,
+               		  (attr->info.avg_bps? attr->info.avg_bps: 0),
+               		  (attr->info.avg_bps? "": "(auto)"),
+               		  attr->setting.vad?1:0,
+               		  attr->setting.plc?1:0,
+               		  attr->setting.packet_loss,
+               		  attr->setting.complexity,
+               		  attr->setting.cbr?1:0));
+
     pj_mutex_unlock (opus_data->mutex);
     return PJ_SUCCESS;
 }
@@ -861,25 +894,43 @@ static pj_status_t  codec_parse( pjmedia_codec *codec,
     opus_repacketizer_cat(opus_data->dec_packer, tmp_buf, pkt_size);
 
     num_frames = opus_repacketizer_get_nb_frames(opus_data->dec_packer);
+    if (num_frames == 0) {
+      PJ_LOG(2, (THIS_FILE, "No frames retrieved (num_frames = 0)"));
+      pj_mutex_unlock(opus_data->mutex);
+      return PJMEDIA_CODEC_EFAILED;
+    }
+
     out_pos = 0;
     for (i = 0; i < num_frames; ++i) {
 	size = opus_repacketizer_out_range(opus_data->dec_packer, i, i+1,
 					   ((unsigned char*)pkt) + out_pos,
 					   sizeof(tmp_buf));
 	if (size < 0) {
-	    PJ_LOG(5, (THIS_FILE, "Parse failed! (%d)", pkt_size));
+	    PJ_LOG(5, (THIS_FILE, "Parse failed! (pkt_size=%d, err=%d)",
+		       pkt_size, size));
             pj_mutex_unlock (opus_data->mutex);
 	    return PJMEDIA_CODEC_EFAILED;
 	}
 	frames[i].type = PJMEDIA_FRAME_TYPE_AUDIO;
 	frames[i].buf = ((char*)pkt) + out_pos;
 	frames[i].size = size;
-	frames[i].bit_info = opus_packet_get_nb_samples(frames[i].buf,
-			     frames[i].size, opus_data->cfg.sample_rate);
+	frames[i].bit_info = 0;
 
 	if (i == 0) {
-    	    unsigned ptime = frames[i].bit_info * 1000 /
-    	    		     opus_data->cfg.sample_rate;
+	    int nsamples;
+	    unsigned ptime;
+
+	    nsamples = opus_packet_get_nb_samples(frames[i].buf,
+						  frames[i].size,
+						  opus_data->cfg.sample_rate);
+	    if (nsamples <= 0) {
+		PJ_LOG(5, (THIS_FILE, "Parse failed to get samples number! "
+				      "(err=%d)", nsamples));
+		pj_mutex_unlock (opus_data->mutex);
+		return PJMEDIA_CODEC_EFAILED;
+	    }
+
+	    ptime = nsamples * 1000 / opus_data->cfg.sample_rate;
     	    if (ptime != opus_data->dec_ptime) {
              	PJ_LOG(4, (THIS_FILE, "Opus ptime change detected: %d ms "
              			      "--> %d ms",
@@ -888,9 +939,9 @@ static pj_status_t  codec_parse( pjmedia_codec *codec,
         	opus_data->dec_frame_index = -1;
 
         	/* Signal to the stream about ptime change. */
-     	    	frames[i].bit_info |= 0x10000;
+		frames[i].bit_info = 0x10000 | nsamples;
     	    }
-     	    samples_per_frame = frames[i].bit_info;
+	    samples_per_frame = nsamples;
    	}
 
 	frames[i].timestamp.u64 = ts->u64 + i * samples_per_frame;

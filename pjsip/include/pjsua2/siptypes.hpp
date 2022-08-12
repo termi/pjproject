@@ -100,6 +100,16 @@ public:
                  const string data);
 
     /**
+     * Convert from pjsip
+     */
+    void fromPj(const pjsip_cred_info &prm);
+
+    /**
+     * Convert to pjsip
+     */
+    pjsip_cred_info toPj() const;
+
+    /**
      * Read this object from a container node.
      *
      * @param node		Container to read values from.
@@ -315,10 +325,25 @@ struct TransportConfig : public PersistentObject
      * Specify the port range for socket binding, relative to the start
      * port number specified in \a port. Note that this setting is only
      * applicable when the start port number is non zero.
+     * 
+     * Example: \a port=5000, \a portRange=4
+     * - Available ports: 5000, 5001, 5002, 5003, 5004 (SIP transport)
+     * 
+     * Available ports are in the range of [\a port, \a port + \a portRange]. 
      *
      * Default value is zero.
      */
     unsigned		portRange;
+
+    /**
+     * Specify whether to randomly pick the starting port number from
+     * the range of [\a port, \a port + \a port_range]. This setting is
+     * used only if both port and port_range are non-zero, and only
+     * applicable for the port selection of UDP and loop media transport.
+     * 
+     * Default is PJ_FALSE.
+     */
+    bool		randomizePort;
 
     /**
      * Optional address to advertise as the address of this transport.

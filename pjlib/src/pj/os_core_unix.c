@@ -47,6 +47,10 @@
 #include <errno.h>	    // errno
 
 #include <pthread.h>
+#if defined(PJ_HAS_PTHREAD_NP_H) && PJ_HAS_PTHREAD_NP_H != 0
+#  include <pthread_np.h>
+#endif
+#include <pj/config.h>
 
 #define THIS_FILE   "os_core_unix.c"
 
@@ -69,7 +73,9 @@ JNIEXPORT jint JNI_OnLoad(JavaVM *vm, void *reserved)
     
     return JNI_VERSION_1_4;
 }
+
 #endif
+
 
 struct pj_thread_t
 {
@@ -175,6 +181,9 @@ PJ_DEF(pj_status_t) pj_init(void)
 	return PJ_SUCCESS;
     }
 
+    /* Init logging */
+    pj_log_init();
+
 #if PJ_HAS_THREADS
     /* Init this thread's TLS. */
     if ((rc=pj_thread_init()) != 0) {
@@ -186,9 +195,6 @@ PJ_DEF(pj_status_t) pj_init(void)
 	return rc;
 
 #endif
-
-    /* Init logging */
-    pj_log_init();
 
     /* Initialize exception ID for the pool.
      * Must do so after critical section is configured.
@@ -303,6 +309,95 @@ PJ_DEF(pj_bool_t) pj_thread_is_registered(void)
 }
 
 
+/* Thread priority utils for Android (via JNI as NDK does not provide it).
+ * Set priority is probably not enough because it does not change the thread
+ * group in scheduler.
+ * Temporary solution is to call the Java API to set the thread priority.
+ * A cool solution would be to port (if possible) the code from the
+ * android os regarding set_sched groups.
+ */
+#if PJ_ANDROID
+
+#include <jni.h>
+#include <sys/resource.h>
+#include <sys/system_properties.h>
+
+PJ_DEF(pj_bool_t) pj_jni_attach_jvm(JNIEnv **jni_env)
+{
+    if ((*pj_jni_jvm)->GetEnv(pj_jni_jvm, (void **)jni_env,
+                               JNI_VERSION_1_4) < 0)
+    {
+        if ((*pj_jni_jvm)->AttachCurrentThread(pj_jni_jvm, jni_env, NULL) < 0)
+        {
+            jni_env = NULL;
+            return PJ_FALSE;
+        }
+        return PJ_TRUE;
+    }
+
+    return PJ_FALSE;
+}
+
+PJ_DEF(void) pj_jni_dettach_jvm(pj_bool_t attached)
+{
+    if (attached)
+        (*pj_jni_jvm)->DetachCurrentThread(pj_jni_jvm);
+}
+
+
+static pj_status_t set_android_thread_priority(int priority)
+{
+    jclass process_class;
+    jmethodID set_prio_method;
+    jthrowable exc;
+    pj_status_t result = PJ_SUCCESS;
+    JNIEnv *jni_env = 0;
+    pj_bool_t attached = pj_jni_attach_jvm(&jni_env);
+
+    PJ_ASSERT_RETURN(jni_env, PJ_FALSE);
+
+    /* Get pointer to the java class */
+    process_class = (jclass)(*jni_env)->NewGlobalRef(jni_env,
+                        (*jni_env)->FindClass(jni_env, "android/os/Process"));
+    if (process_class == 0) {
+        PJ_LOG(5, (THIS_FILE, "Unable to find class android.os.Process"));
+        result = PJ_EIGNORED;
+        goto on_return;
+    }
+
+    /* Get the id of set thread priority function */
+    set_prio_method = (*jni_env)->GetStaticMethodID(jni_env, process_class,
+                                                    "setThreadPriority",
+                                                    "(I)V");
+    if (set_prio_method == 0) {
+        PJ_LOG(5, (THIS_FILE, "Unable to find setThreadPriority() method"));
+        result = PJ_EIGNORED;
+        goto on_return;
+    }
+
+    /* Set the thread priority */
+    (*jni_env)->CallStaticVoidMethod(jni_env, process_class, set_prio_method,
+                                     priority);
+    exc = (*jni_env)->ExceptionOccurred(jni_env);
+    if (exc) {
+        (*jni_env)->ExceptionDescribe(jni_env);
+        (*jni_env)->ExceptionClear(jni_env);
+        PJ_LOG(4, (THIS_FILE, "Failure in setting thread priority using "
+                              "Java API, fallback to setpriority()"));
+        setpriority(PRIO_PROCESS, 0, priority);
+    } else {
+        PJ_LOG(5, (THIS_FILE, "Setting thread priority to %d successful",
+	           priority));
+    }
+
+on_return:
+    pj_jni_dettach_jvm(attached);
+    return result;
+}
+
+#endif
+
+
 /*
  * Get thread priority value for the thread.
  */
@@ -331,6 +426,12 @@ PJ_DEF(int) pj_thread_get_prio(pj_thread_t *thread)
 PJ_DEF(pj_status_t) pj_thread_set_prio(pj_thread_t *thread,  int prio)
 {
 #if PJ_HAS_THREADS
+
+#  if PJ_ANDROID
+    PJ_ASSERT_RETURN(thread==NULL || thread==pj_thread_this(), PJ_EINVAL);
+    return set_android_thread_priority(prio);
+#  else
+
     struct sched_param param;
     int policy;
     int rc;
@@ -346,6 +447,9 @@ PJ_DEF(pj_status_t) pj_thread_set_prio(pj_thread_t *thread,  int prio)
 	return PJ_RETURN_OS_ERROR(rc);
 
     return PJ_SUCCESS;
+
+#  endif /* PJ_ANDROID */
+
 #else
     PJ_UNUSED_ARG(thread);
     PJ_UNUSED_ARG(prio);
@@ -516,6 +620,37 @@ pj_status_t pj_thread_init(void)
 }
 
 #if PJ_HAS_THREADS
+
+/*
+ * Set current thread display name
+ * This can be useful for debugging, as the name is displayed in the thread status
+ */
+static void set_thread_display_name(const char *name)
+{
+#if (defined(PJ_LINUX) && PJ_LINUX != 0) ||                                    \
+    (defined(PJ_ANDROID) && PJ_ANDROID != 0)
+    char xname[16];
+    // On linux, thread display name length is restricted to 16 (include '\0')
+    if (pj_ansi_strlen(name) >= 16) {
+	pj_ansi_snprintf(xname, 16, "%s", name);
+	name = xname;
+    }
+#endif
+
+#if defined(PJ_HAS_PTHREAD_SETNAME_NP) && PJ_HAS_PTHREAD_SETNAME_NP != 0
+#   if defined(PJ_DARWINOS) && PJ_DARWINOS != 0
+    pthread_setname_np(name);
+#   else
+    pthread_setname_np(pthread_self(), name);
+#   endif
+#elif defined(PJ_HAS_PTHREAD_SET_NAME_NP) && PJ_HAS_PTHREAD_SET_NAME_NP != 0
+    pthread_set_name_np(pthread_self(), name);
+#else
+#   warning "OS not support set thread display name"
+    PJ_UNUSED_ARG(name);
+#endif
+}
+
 /*
  * thread_main()
  *
@@ -544,6 +679,8 @@ static void *thread_main(void *param)
     }
 
     PJ_LOG(6,(rec->obj_name, "Thread started"));
+
+    set_thread_display_name(rec->obj_name);
 
     /* Call user's entry! */
     result = (void*)(long)(*rec->proc)(rec->arg);
@@ -620,8 +757,10 @@ PJ_DEF(pj_status_t) pj_thread_create( pj_pool_t *pool,
 #if defined(PJ_THREAD_SET_STACK_SIZE) && PJ_THREAD_SET_STACK_SIZE!=0
     /* Set thread's stack size */
     rc = pthread_attr_setstacksize(&thread_attr, stack_size);
-    if (rc != 0)
+    if (rc != 0) {
+	pthread_attr_destroy(&thread_attr);
 	return PJ_RETURN_OS_ERROR(rc);
+    }
 #endif	/* PJ_THREAD_SET_STACK_SIZE */
 
 
@@ -631,8 +770,10 @@ PJ_DEF(pj_status_t) pj_thread_create( pj_pool_t *pool,
     PJ_ASSERT_RETURN(stack_addr, PJ_ENOMEM);
 
     rc = pthread_attr_setstackaddr(&thread_attr, stack_addr);
-    if (rc != 0)
+    if (rc != 0) {
+	pthread_attr_destroy(&thread_attr);
 	return PJ_RETURN_OS_ERROR(rc);
+    }
 #endif	/* PJ_THREAD_ALLOCATE_STACK */
 
 
@@ -641,8 +782,12 @@ PJ_DEF(pj_status_t) pj_thread_create( pj_pool_t *pool,
     rec->arg = arg;
     rc = pthread_create( &rec->thread, &thread_attr, &thread_main, rec);
     if (rc != 0) {
+	pthread_attr_destroy(&thread_attr);
 	return PJ_RETURN_OS_ERROR(rc);
     }
+
+    /* Destroy thread attributes */
+    pthread_attr_destroy(&thread_attr);
 
     *ptr_thread = rec;
 

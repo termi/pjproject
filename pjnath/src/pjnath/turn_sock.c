@@ -729,7 +729,7 @@ static pj_bool_t on_connect_complete(pj_turn_sock *turn_sock,
     pj_grp_lock_acquire(turn_sock->grp_lock);
 
     /* TURN session may have already been destroyed here.
-     * See ticket #1557 (http://trac.pjsip.org/repos/ticket/1557).
+     * See ticket #1557 (https://github.com/pjsip/pjproject/issues/1557).
      */
     if (!turn_sock->sess) {
 	sess_fail(turn_sock, "TURN session already destroyed", status);
@@ -1027,7 +1027,7 @@ static pj_status_t send_pkt(pj_turn_session *sess,
 
     if (turn_sock == NULL || turn_sock->is_destroying) {
 	/* We've been destroyed */
-	// https://trac.pjsip.org/repos/ticket/1316
+	// https://github.com/pjsip/pjproject/issues/1316
 	//pj_assert(!"We should shutdown gracefully");
 	return PJ_EINVALIDOP;
     }
@@ -1248,6 +1248,7 @@ static void turn_on_state(pj_turn_session *sess,
 					 turn_sock->setting.port_range,
 					 max_bind_retry);
 	    if (status != PJ_SUCCESS) {
+	    	pj_sock_close(sock);
 		pj_turn_sock_destroy(turn_sock);
 		return;
 	    }
@@ -1258,6 +1259,7 @@ static void turn_on_state(pj_turn_session *sess,
 				    turn_sock->pool->obj_name, NULL);
 	    if (status != PJ_SUCCESS && !turn_sock->setting.qos_ignore_error) 
 	    {
+	    	pj_sock_close(sock);
 		pj_turn_sock_destroy(turn_sock);
 		return;
 	    }
@@ -1314,7 +1316,9 @@ static void turn_on_state(pj_turn_session *sess,
 					  sock_type, &asock_cfg,
 					  turn_sock->cfg.ioqueue, &asock_cb,
 					  turn_sock,
-					  &turn_sock->active_sock);
+					  &turn_sock->active_sock);                                                                                                                                                                                                                                                                             
+	    if (status != PJ_SUCCESS)
+	    	pj_sock_close(sock);
 	}
 #if PJ_HAS_SSL_SOCK
 	else {
@@ -1502,7 +1506,7 @@ static pj_bool_t dataconn_on_data_read(pj_activesock_t *asock,
 	if (conn->state == DATACONN_STATE_READY) {
 	    /* Application data */
 	    if (turn_sock->cb.on_rx_data) {
-		(*turn_sock->cb.on_rx_data)(turn_sock, data, *remainder,
+		(*turn_sock->cb.on_rx_data)(turn_sock, data, (unsigned)*remainder,
 					    &conn->peer_addr,
 					    conn->peer_addr_len);
 	    }

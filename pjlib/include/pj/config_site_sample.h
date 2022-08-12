@@ -303,7 +303,7 @@
      */
 
     /* Both armv6 and armv7 has FP hardware support.
-     * See https://trac.pjsip.org/repos/ticket/1589 for more info
+     * See https://github.com/pjsip/pjproject/issues/1589 for more info
      */
     #define PJ_HAS_FLOATING_POINT		1
 
@@ -447,7 +447,6 @@
 #   undef PJ_OS_HAS_CHECK_STACK
 #   define PJ_OS_HAS_CHECK_STACK	0
 #   define PJ_LOG_MAX_LEVEL		0
-#   define PJ_ENABLE_EXTRA_CHECK	0
 #   define PJ_HAS_ERROR_STRING		0
 #   undef PJ_IOQUEUE_MAX_HANDLES
 /* Putting max handles to lower than 32 will make pj_fd_set_t size smaller
@@ -466,7 +465,6 @@
 #   undef PJ_OS_HAS_CHECK_STACK
 #   define PJ_OS_HAS_CHECK_STACK	0
 #   define PJ_LOG_MAX_LEVEL		3
-#   define PJ_ENABLE_EXTRA_CHECK	0
 #   define PJ_IOQUEUE_MAX_HANDLES	5000
 #   define PJSIP_MAX_TSX_COUNT		((640*1024)-1)
 #   define PJSIP_MAX_DIALOG_COUNT	((640*1024)-1)

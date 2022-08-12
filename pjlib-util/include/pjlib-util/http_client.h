@@ -181,7 +181,7 @@ typedef struct pj_http_req_param
         pj_size_t  size;           /**< Request body size */
         pj_size_t  total_size;     /**< If total_size > 0, data */
                                    /**< will be provided later  */
-    } reqdata;
+    } reqdata; /**< The request body */
 
     /**
      * Authentication credential needed to respond to 401/407 response.
@@ -357,7 +357,7 @@ PJ_DECL(void) pj_http_req_param_default(pj_http_req_param *param);
  *
  * @param headers	The headers.
  * @param name	        The header field name.
- * @param value	        The header field value.
+ * @param val	        The header field value.
  *
  * @return	        PJ_SUCCESS if the operation has been successful,
  *		        or the appropriate error code on failure.
@@ -373,7 +373,7 @@ PJ_DECL(pj_status_t) pj_http_headers_add_elmt(pj_http_headers *headers,
  *
  * @param headers	The headers.
  * @param name	        The header field name.
- * @param value	        The header field value.
+ * @param val	        The header field value.
  *
  * @return	        PJ_SUCCESS if the operation has been successful,
  *		        or the appropriate error code on failure.

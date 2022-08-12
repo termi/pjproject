@@ -20,7 +20,7 @@
 #define __PJMEDIA_VIDPORT_H__
 
 /**
- * @file pjmedia/videoport.h Video media port
+ * @file pjmedia/vid_port.h Video media port
  * @brief Video media port
  */
 
@@ -164,6 +164,18 @@ pjmedia_vid_port_set_clock_src( pjmedia_vid_port *vid_port,
  * @return		PJ_SUCCESS on success or the appropriate error code.
  */
 PJ_DECL(pj_status_t) pjmedia_vid_port_subscribe_event(
+						pjmedia_vid_port *vid_port,
+						pjmedia_port *port);
+
+/**
+ * Unsubscribe media event notifications from the specified media port.
+ *
+ * @param vid_port	The video port.
+ * @param port		The media port whose events to be unsubscribed.
+ *
+ * @return		PJ_SUCCESS on success or the appropriate error code.
+ */
+PJ_DECL(pj_status_t) pjmedia_vid_port_unsubscribe_event(
 						pjmedia_vid_port *vid_port,
 						pjmedia_port *port);
 

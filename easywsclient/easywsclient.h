@@ -5,7 +5,11 @@
 extern "C" {
 #endif
 		
-	int easywsclient_startsWith(const char *, const char *);
+    typedef void log_func_cb(const char *data);
+
+    void easywsclient_setLogCB(log_func_cb* log_cb);
+
+    int easywsclient_startsWith(const char *, const char *);
 //__declspec( dllimport )
 	void easywsclient_setUrl(const char *);
 //__declspec( dllimport )

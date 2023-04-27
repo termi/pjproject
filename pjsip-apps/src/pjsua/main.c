@@ -154,9 +154,16 @@ int main_func(int argc, char *argv[])
     return 0;
 }
 
+#include "crashdumper.h"
+
 int main(int argc, char *argv[])
 {
     pj_log_set_level(1);
+
+    char tmp_buff[256];
+    pj_get_temporary_dir(&tmp_buff[0], sizeof(tmp_buff));
+
+    initCrashHandling(tmp_buff);
 
     return pj_run_app(&main_func, argc, argv, 0);
 }

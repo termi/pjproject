@@ -54,6 +54,13 @@ static void stereo_demo();
 pj_bool_t showNotification(pjsua_call_id call_id);
 #endif
 
+#ifdef WIN32
+#include <io.h>
+#define F_OK 0
+#define access _access
+#endif
+
+
 static void ringback_start(pjsua_call_id call_id);
 static void ring_start(pjsua_call_id call_id);
 static void ring_stop(pjsua_call_id call_id);
@@ -64,6 +71,52 @@ static pjsua_app_cfg_t app_cfg;
 pj_str_t                    uri_arg;
 pj_bool_t                   app_running = PJ_FALSE;
 
+
+static void log_for_easywsclient(const char *data)
+{
+    PJ_LOG(3, ("easywsclient.cpp", data));
+}
+
+static void rolling_log_file(const char *prev_log_file_name, const char *new_log_file_name, unsigned needRemove)
+{
+    char tmp_buf[256];
+    char log_fn_buf[256];
+    char prev_file_buf[256];
+    pj_get_temporary_dir(&tmp_buf[0], sizeof(tmp_buf));
+
+    strcpy(log_fn_buf, tmp_buf);
+    strcpy(prev_file_buf, tmp_buf);
+
+    strcat(log_fn_buf, new_log_file_name);
+    strcat(prev_file_buf, prev_log_file_name);
+
+    if (access(prev_file_buf, F_OK) == 0) {
+        // file exists
+        if (needRemove) {
+            remove(prev_file_buf);
+        }
+        else {
+            rename(prev_file_buf, log_fn_buf);
+        }
+    }
+}
+
+static void rolling_log_files()
+{
+    char tmp_buf[256];
+    char log_fn_buf[256];
+    char prev_file_buf[256];
+    pj_get_temporary_dir(&tmp_buf[0], sizeof(tmp_buf));
+
+    const char *lg_file_name_3 = "pjapp_3.log";
+    const char *lg_file_name_2 = "pjapp_2.log";
+    const char *lg_file_name_1 = "pjapp_1.log";
+    const char *lg_file_name = "pjapp.log";
+
+    rolling_log_file(lg_file_name_2, lg_file_name_3, 1);
+    rolling_log_file(lg_file_name_1, lg_file_name_2, 0);
+    rolling_log_file(lg_file_name, lg_file_name_1, 0);
+}
 
 // ADDED BY TERMI START
 //std::string webSocketUri;
@@ -530,7 +583,8 @@ static void on_incoming_call(pjsua_acc_id acc_id, pjsua_call_id call_id,
             );*/
         // Новая версия получения входящего звонка
         // "escape::" for end-using '\n' escaping
-        easywsclient_sendMessage4000("json::escape::{\"type\":\"incoming_call_message\",\"id\":%d,\"acc_id\":%d,\"rdata\":\"<|[%s]|>\",\"message\":\"<|[%.*s]|>\",\"Call-ID\":\"%.*s\"}",
+        //easywsclient_sendMessage4000
+        easywsclient_sendMessage("json::escape::{\"type\":\"incoming_call_message\",\"id\":%d,\"acc_id\":%d,\"rdata\":\"<|[%s]|>\",\"message\":\"<|[%.*s]|>\",\"Call-ID\":\"%.*s\"}",
             call_info.id, acc_id,
             pjsip_rx_data_get_info(rdata),
             (int)rdata->msg_info.len, rdata->msg_info.msg_buf,
@@ -1670,6 +1724,8 @@ static pj_status_t app_init(void)
     pj_pool_t *tmp_pool;
     pj_status_t status;
 
+    easywsclient_setLogCB(&log_for_easywsclient);
+
     /** Create pjsua **/
     status = pjsua_create();
     if (status != PJ_SUCCESS)
@@ -1678,6 +1734,33 @@ static pj_status_t app_init(void)
     /* Create pool for application */
     app_config.pool = pjsua_pool_create("pjsua-app", 1000, 1000);
     tmp_pool = pjsua_pool_create("tmp-pjsua", 1000, 1000);;
+
+    /** Parse args **/
+    status = load_config(app_cfg.argc, app_cfg.argv, &uri_arg);
+    if (status != PJ_SUCCESS) {
+        pj_pool_release(tmp_pool);
+        return status;
+    }
+
+    if (app_config.log_cfg.log_filename.slen) {
+        //free(app_config.log_cfg.log_filename.ptr);
+        app_config.log_cfg.log_filename.ptr = NULL;
+        app_config.log_cfg.log_filename.slen = 0;
+    }
+
+    char tmp_buff[256];
+    pj_get_temporary_dir(&tmp_buff[0], sizeof(tmp_buff));
+
+    const char *lg_file_name = "pjapp.log";
+    if (app_config.log_cfg.level > 0 && tmp_buff[0]) {
+        unsigned int len = strlen(tmp_buff) + strlen(lg_file_name) + 1;
+        app_config.log_cfg.log_filename.ptr = malloc(len);
+        app_config.log_cfg.log_filename.slen = len - 1;
+        strcpy(app_config.log_cfg.log_filename.ptr, tmp_buff);
+        strcat(app_config.log_cfg.log_filename.ptr, lg_file_name);
+
+        rolling_log_files();
+    }
 
     /* Init CLI & its FE settings */
     if (!app_running) {
@@ -1708,13 +1791,6 @@ static pj_status_t app_init(void)
     __index = easywsclient_createServer();
 
     // ADDED BY TERMI END
-
-    /** Parse args **/
-    status = load_config(app_cfg.argc, app_cfg.argv, &uri_arg);
-    if (status != PJ_SUCCESS) {
-        pj_pool_release(tmp_pool);
-        return status;
-    }
 
     /* Initialize application callbacks */
     app_config.cfg.cb.on_call_state = &on_call_state;
@@ -2323,6 +2399,9 @@ pj_status_t pjsua_app_init(const pjsua_app_cfg_t *cfg)
     if (app_config.use_cli) {
         status = cli_init();
     } 
+
+    PJ_LOG(3, (THIS_FILE, "pjlib %s(%s) for win32 initialized",
+        PJ_VERSION, "-build20230427"));
     return status;
 }
 

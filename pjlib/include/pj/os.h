@@ -1476,6 +1476,8 @@ PJ_DECL(int) pj_run_app(pj_main_func_ptr main_func, int argc, char *argv[],
 pj_status_t pj_thread_init(void);
 
 
+PJ_DECL(void) pj_get_temporary_dir(char* temp_dir, unsigned int size);
+
 PJ_END_DECL
 
 #endif  /* __PJ_OS_H__ */

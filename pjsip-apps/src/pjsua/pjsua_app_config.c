@@ -1520,6 +1520,9 @@ static pj_status_t parse_args(int argc, char *argv[],
         }
     }
 
+    cfg->log_cfg.decor |= PJ_LOG_HAS_YEAR | PJ_LOG_HAS_MONTH | PJ_LOG_HAS_DAY_OF_MON \
+        | PJ_LOG_HAS_MICRO_SEC | PJ_LOG_HAS_LEVEL_TEXT | PJ_LOG_HAS_THREAD_ID | PJ_LOG_HAS_THREAD_SWC;
+
     if (pj_optind != argc) {
         pj_str_t uri_arg;
 

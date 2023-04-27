@@ -71,6 +71,7 @@
     #define SOCKET_EWOULDBLOCK EWOULDBLOCK
 #endif
 
+#include <mutex>
 #include <vector>
 #include <string>
 
@@ -175,6 +176,9 @@ class _RealWebSocket : public easywsclient::WebSocket
     readyStateValues readyState;
     bool useMask;
 
+	std::mutex tx_mtx;
+	std::mutex rx_mtx;
+
     _RealWebSocket(socket_t sockfd, bool useMask) : sockfd(sockfd), readyState(OPEN), useMask(useMask) {
     }
 
@@ -197,48 +201,60 @@ class _RealWebSocket : public easywsclient::WebSocket
             FD_ZERO(&rfds);
             FD_ZERO(&wfds);
             FD_SET(sockfd, &rfds);
-            if (txbuf.size()) { FD_SET(sockfd, &wfds); }
-            select(sockfd + 1, &rfds, &wfds, 0, timeout > 0 ? &tv : 0);
+			{
+				std::lock_guard<std::mutex> lock(tx_mtx);
+				if (txbuf.size()) { FD_SET(sockfd, &wfds); }
+			}
+            
+			select(sockfd + 1, &rfds, &wfds, 0, timeout > 0 ? &tv : 0);
         }
-        while (true) {
-            // FD_ISSET(0, &rfds) will be true
-            int N = rxbuf.size();
-            ssize_t ret;
-            rxbuf.resize(N + 1500);
-            ret = recv(sockfd, (char*)&rxbuf[0] + N, 1500, 0);
-            if (false) { }
-            else if (ret < 0 && (socketerrno == SOCKET_EWOULDBLOCK || socketerrno == SOCKET_EAGAIN_EINPROGRESS)) {
-                rxbuf.resize(N);
-                break;
-            }
-            else if (ret <= 0) {
-                rxbuf.resize(N);
-                closesocket(sockfd);
-                readyState = CLOSED;
-                fputs(ret < 0 ? "Connection error!\n" : "Connection closed!\n", stderr);
-                break;
-            }
-            else {
-                rxbuf.resize(N + ret);
-            }
-        }
-        while (txbuf.size()) {
-            int ret = ::send(sockfd, (char*)&txbuf[0], txbuf.size(), 0);
-            if (false) { } // ??
-            else if (ret < 0 && (socketerrno == SOCKET_EWOULDBLOCK || socketerrno == SOCKET_EAGAIN_EINPROGRESS)) {
-                break;
-            }
-            else if (ret <= 0) {
-                closesocket(sockfd);
-                readyState = CLOSED;
-                fputs(ret < 0 ? "Connection error!\n" : "Connection closed!\n", stderr);
-                break;
-            }
-            else {
-                txbuf.erase(txbuf.begin(), txbuf.begin() + ret);
-            }
-        }
-        if (!txbuf.size() && readyState == CLOSING) {
+		{
+			std::lock_guard<std::mutex> lock(rx_mtx);
+			while (true) {
+				// FD_ISSET(0, &rfds) will be true
+				int N = rxbuf.size();
+				ssize_t ret;
+				rxbuf.resize(N + 1500);
+				ret = recv(sockfd, (char*)&rxbuf[0] + N, 1500, 0);
+				if (false) {}
+				else if (ret < 0 && (socketerrno == SOCKET_EWOULDBLOCK || socketerrno == SOCKET_EAGAIN_EINPROGRESS)) {
+					rxbuf.resize(N);
+					break;
+				}
+				else if (ret <= 0) {
+					rxbuf.resize(N);
+					closesocket(sockfd);
+					readyState = CLOSED;
+					fputs(ret < 0 ? "Connection error!\n" : "Connection closed!\n", stderr);
+					break;
+				}
+				else {
+					rxbuf.resize(N + ret);
+				}
+			}
+		}
+		bool closing = false;
+		{
+			std::lock_guard<std::mutex> lock(tx_mtx);
+			while (txbuf.size()) {
+				int ret = ::send(sockfd, (char*)&txbuf[0], txbuf.size(), 0);
+				if (false) {} // ??
+				else if (ret < 0 && (socketerrno == SOCKET_EWOULDBLOCK || socketerrno == SOCKET_EAGAIN_EINPROGRESS)) {
+					break;
+				}
+				else if (ret <= 0) {
+					closesocket(sockfd);
+					readyState = CLOSED;
+					fputs(ret < 0 ? "Connection error!\n" : "Connection closed!\n", stderr);
+					break;
+				}
+				else {
+					txbuf.erase(txbuf.begin(), txbuf.begin() + ret);
+				}
+			}
+			closing = (!txbuf.size() && readyState == CLOSING);
+		}
+        if (closing) {
             closesocket(sockfd);
             readyState = CLOSED;
         }
@@ -268,6 +284,7 @@ class _RealWebSocket : public easywsclient::WebSocket
         // TODO: consider acquiring a lock on rxbuf...
         while (true) {
             wsheader_type ws;
+			std::lock_guard<std::mutex> lock(rx_mtx);
             if (rxbuf.size() < 2) { return; /* Need at least 2 */ }
             const uint8_t * data = (uint8_t *) &rxbuf[0]; // peek, but don't consume
             ws.fin = (data[0] & 0x80) == 0x80;
@@ -359,7 +376,7 @@ class _RealWebSocket : public easywsclient::WebSocket
     }
 
     template<class Iterator>
-    void sendData(wsheader_type::opcode_type type, uint64_t message_size, Iterator message_begin, Iterator message_end) {
+    void sendData(wsheader_type::opcode_type type, size_t message_size, Iterator message_begin, Iterator message_end) {
         // TODO:
         // Masking key should (must) be derived from a high quality random
         // number generator, to mitigate attacks on non-WebSocket friendly
@@ -412,11 +429,14 @@ class _RealWebSocket : public easywsclient::WebSocket
             }
         }
         // N.B. - txbuf will keep growing until it can be transmitted over the socket:
-        txbuf.insert(txbuf.end(), header.begin(), header.end());
-        txbuf.insert(txbuf.end(), message_begin, message_end);
-        if (useMask) {
-            for (size_t i = 0; i != message_size; ++i) { *(txbuf.end() - message_size + i) ^= masking_key[i&0x3]; }
-        }
+		{
+			std::lock_guard<std::mutex> lock(tx_mtx);
+			txbuf.insert(txbuf.end(), header.begin(), header.end());
+			txbuf.insert(txbuf.end(), message_begin, message_end);
+			if (useMask) {
+				for (size_t i = 0; i != message_size; ++i) { *(txbuf.end() - message_size + i) ^= masking_key[i & 0x3]; }
+			}
+		}
     }
 
     void close() {
@@ -424,7 +444,10 @@ class _RealWebSocket : public easywsclient::WebSocket
         readyState = CLOSING;
         uint8_t closeFrame[6] = {0x88, 0x80, 0x00, 0x00, 0x00, 0x00}; // last 4 bytes are a masking key
         std::vector<uint8_t> header(closeFrame, closeFrame+6);
-        txbuf.insert(txbuf.end(), header.begin(), header.end());
+		{
+			std::lock_guard<std::mutex> lock(tx_mtx);
+			txbuf.insert(txbuf.end(), header.begin(), header.end());
+		}
     }
 
 };

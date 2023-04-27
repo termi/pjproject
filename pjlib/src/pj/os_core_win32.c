@@ -31,6 +31,8 @@
 #include <stdio.h>
 
 #include <windows.h>
+#include <psapi.h>
+
 
 #if defined(PJ_HAS_WINSOCK2_H) && PJ_HAS_WINSOCK2_H != 0
 #  include <winsock2.h>
@@ -239,6 +241,7 @@ PJ_DEF(void) pj_shutdown()
     if (--initialized != 0)
         return;
 
+    PJ_LOG(3, ("os_core_win32.c | pj_shutdown()", "shutdowning..."));
     /* Display stack usage */
 #if defined(PJ_OS_HAS_CHECK_STACK) && PJ_OS_HAS_CHECK_STACK!=0
     {
@@ -1619,4 +1622,50 @@ PJ_DEF(int) pj_run_app(pj_main_func_ptr main_func, int argc, char *argv[],
 {
     PJ_UNUSED_ARG(flags);
     return (*main_func)(argc, argv);
+}
+
+PJ_DEF(void) pj_get_temporary_dir(char* temp_dir, unsigned int size)
+{
+    char buf[256];
+
+    DWORD res = GetTempPathA(sizeof(buf), buf);
+    if (res != 0 && (res + 7 < size)) {
+        strncpy(temp_dir, buf, res);
+        *(temp_dir + res) = 'p';
+        *(temp_dir + res + 1) = 'j';
+        *(temp_dir + res + 2) = 'a';
+        *(temp_dir + res + 3) = 'p';
+        *(temp_dir + res + 4) = 'p';
+        *(temp_dir + res + 5) = '\\';
+        *(temp_dir + res + 6) = 0;
+
+        DWORD dwAttrib = GetFileAttributes(temp_dir);
+
+        if (!(dwAttrib != INVALID_FILE_ATTRIBUTES &&
+            (dwAttrib & FILE_ATTRIBUTE_DIRECTORY))) {
+            CreateDirectoryA(temp_dir, NULL);
+        }
+    }
+    else {
+        temp_dir[0] = 0;
+    }
+}
+
+PJ_DEF(void) pj_log_memory_status()
+{
+    PROCESS_MEMORY_COUNTERS_EX proc_memory;
+
+    if (GetProcessMemoryInfo(GetCurrentProcess(), &proc_memory, sizeof(proc_memory))) {
+
+        PJ_LOG(3, ("os_core_win32.c | pj_log_memory_status", "MemInfo:\n"
+                   "PeakWorkingSetSize: %u | WorkingSetSize: %u | QuotaPeakPagedPoolUsage: %u | QuotaPagedPoolUsage: %u\n"
+                   "QuotaPeakNonPagedPoolUsage: %u | QuotaNonPagedPoolUsage: %u | PagefileUsage: %u | PeakPagefileUsage: %u\n"
+                   "PrivateUsage: %u\n",
+            proc_memory.PeakWorkingSetSize, proc_memory.WorkingSetSize, proc_memory.QuotaPeakPagedPoolUsage, proc_memory.QuotaPagedPoolUsage,
+            proc_memory.QuotaPeakNonPagedPoolUsage, proc_memory.QuotaNonPagedPoolUsage, proc_memory.PagefileUsage, proc_memory.PeakPagefileUsage,
+            proc_memory.PrivateUsage));
+    }
+    else {
+        PJ_LOG(1, ("os_core_win32.c | pj_log_memory_status", "GetProcessMemoryInfo failed!"));
+    }
 }

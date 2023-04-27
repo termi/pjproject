@@ -47,7 +47,7 @@ static pj_log_func *log_writer = &pj_log_write;
 static unsigned log_decor = PJ_LOG_HAS_TIME | PJ_LOG_HAS_MICRO_SEC |
                             PJ_LOG_HAS_SENDER | PJ_LOG_HAS_NEWLINE |
                             PJ_LOG_HAS_SPACE | PJ_LOG_HAS_THREAD_SWC |
-                            PJ_LOG_HAS_INDENT
+                            PJ_LOG_HAS_INDENT | PJ_LOG_HAS_THREAD_ID | PJ_LOG_HAS_LEVEL_TEXT
 #if (defined(PJ_WIN32) && PJ_WIN32!=0) || \
     (defined(PJ_WIN64) && PJ_WIN64!=0)
                             | PJ_LOG_HAS_COLOR

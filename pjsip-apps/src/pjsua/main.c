@@ -154,9 +154,17 @@ int main_func(int argc, char *argv[])
     return 0;
 }
 
+// ADDED BY MAXSHDR START
+#include "crashdumper.h"
+// ADDED BY MAXSHDR END
+
 int main(int argc, char *argv[])
 {
     pj_log_set_level(1);
+
+    // ADDED BY MAXSHDR START
+    initCrashHandling(NULL);
+	// ADDED BY MAXSHDR END
 
     return pj_run_app(&main_func, argc, argv, 0);
 }

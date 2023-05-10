@@ -163,7 +163,10 @@ int main(int argc, char *argv[])
     pj_log_set_level(1);
 
     // ADDED BY MAXSHDR START
-    initCrashHandling(NULL);
+    char tmp_buff[256];
+    pj_get_temporary_dir(&tmp_buff[0], sizeof(tmp_buff));
+
+    initCrashHandling(tmp_buff);
 	// ADDED BY MAXSHDR END
 
     return pj_run_app(&main_func, argc, argv, 0);

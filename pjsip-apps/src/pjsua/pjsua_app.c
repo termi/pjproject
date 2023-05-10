@@ -65,6 +65,54 @@ pj_str_t                    uri_arg;
 pj_bool_t                   app_running = PJ_FALSE;
 
 
+// ADDED BY MAXSHDR START
+static void log_for_easywsclient(const char *data)
+{
+    PJ_LOG(3, ("easywsclient.cpp", data));
+}
+
+static void rolling_log_file(const char *prev_log_file_name, const char *new_log_file_name, unsigned needRemove)
+{
+    char tmp_buf[256];
+    char log_fn_buf[256];
+    char prev_file_buf[256];
+    pj_get_temporary_dir(&tmp_buf[0], sizeof(tmp_buf));
+
+    strcpy(log_fn_buf, tmp_buf);
+    strcpy(prev_file_buf, tmp_buf);
+
+    strcat(log_fn_buf, new_log_file_name);
+    strcat(prev_file_buf, prev_log_file_name);
+
+    if (access(prev_file_buf, 0) == 0) {
+        // file exists
+        if (needRemove) {
+            remove(prev_file_buf);
+        }
+        else {
+            rename(prev_file_buf, log_fn_buf);
+        }
+    }
+}
+
+static void rolling_log_files()
+{
+    char tmp_buf[256];
+    char log_fn_buf[256];
+    char prev_file_buf[256];
+    pj_get_temporary_dir(&tmp_buf[0], sizeof(tmp_buf));
+
+    const char *lg_file_name_3 = "pjapp_3.log";
+    const char *lg_file_name_2 = "pjapp_2.log";
+    const char *lg_file_name_1 = "pjapp_1.log";
+    const char *lg_file_name = "pjapp.log";
+
+    rolling_log_file(lg_file_name_2, lg_file_name_3, 1);
+    rolling_log_file(lg_file_name_1, lg_file_name_2, 0);
+    rolling_log_file(lg_file_name, lg_file_name_1, 0);
+}
+// ADDED BY MAXSHDR END
+
 // ADDED BY TERMI START
 //std::string webSocketUri;
 //std::string prefix;
@@ -1670,6 +1718,10 @@ static pj_status_t app_init(void)
     pj_pool_t *tmp_pool;
     pj_status_t status;
 
+    // ADDED BY MAXSHDR START
+    easywsclient_setLogCB(&log_for_easywsclient);
+    // ADDED BY MAXSHDR END
+
     /** Create pjsua **/
     status = pjsua_create();
     if (status != PJ_SUCCESS)
@@ -1715,6 +1767,28 @@ static pj_status_t app_init(void)
         pj_pool_release(tmp_pool);
         return status;
     }
+
+    // ADDED BY MAXSHDR START
+	if (app_config.log_cfg.log_filename.slen) {
+        //free(app_config.log_cfg.log_filename.ptr);
+        app_config.log_cfg.log_filename.ptr = NULL;
+        app_config.log_cfg.log_filename.slen = 0;
+    }
+
+    char tmp_buff[256];
+    pj_get_temporary_dir(&tmp_buff[0], sizeof(tmp_buff));
+
+    const char *lg_file_name = "pjapp.log";
+    if (app_config.log_cfg.level > 0 && tmp_buff[0]) {
+        unsigned int len = strlen(tmp_buff) + strlen(lg_file_name) + 1;
+        app_config.log_cfg.log_filename.ptr = malloc(len);
+        app_config.log_cfg.log_filename.slen = len - 1;
+        strcpy(app_config.log_cfg.log_filename.ptr, tmp_buff);
+        strcat(app_config.log_cfg.log_filename.ptr, lg_file_name);
+
+        rolling_log_files();
+    }
+    // ADDED BY MAXSHDR END
 
     /* Initialize application callbacks */
     app_config.cfg.cb.on_call_state = &on_call_state;

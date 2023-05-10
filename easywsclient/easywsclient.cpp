@@ -22,6 +22,20 @@ std::string lastUrl;
 std::string serverPrefix;
 unsigned int counterBeforePing;
 
+static log_func_cb *g_log_func = nullptr;
+
+void doLog(const std::string& log_data)
+{
+    if (g_log_func)
+        (*g_log_func)(log_data.c_str());
+}
+
+
+void easywsclient_setLogCB(log_func_cb* log_cb)
+{
+    g_log_func = log_cb;
+}
+
 int easywsclient_startsWith(const char *pre, const char *str)
 {
     size_t lenpre = strlen(pre),
@@ -52,8 +66,10 @@ void easywsclient_setPrefix(const char * prefix) {
 }
 
 int easywsclient_createServer() {
-	if ( lastUrl == "" ) {
-		return 0;
+    doLog("easywsclient_createServer | ENTER | lastUrl: " + lastUrl);
+    
+    if ( lastUrl == "" ) {
+        return 0;
 	}
 
 	#ifdef _WIN32
@@ -62,6 +78,7 @@ int easywsclient_createServer() {
 
     rc = WSAStartup(MAKEWORD(2, 2), &wsaData);
     if (rc) {
+        doLog("easywsclient_createServer | L1 | rc: " + std::to_string(rc));
         return 0;
     }
 	#endif
@@ -96,7 +113,9 @@ int easywsclient_createServer() {
 		//std::cout << "\nreceiving " << smessage;
 	});
 
-	return currentWebSocket->getReadyState() != easywsclient::WebSocket::CLOSED ? 1 : 0;
+    doLog("easywsclient_createServer | EXIT");
+    
+    return currentWebSocket->getReadyState() != easywsclient::WebSocket::CLOSED ? 1 : 0;
 }
 
 int easywsclient_sendMessage(const char * fmt, ...) {	
@@ -111,11 +130,15 @@ int easywsclient_sendMessage(const char * fmt, ...) {
 
 	std::string message(buf);
 
+    doLog("easywsclient_sendMessage | L1 | message: " + message);
+
 	//std::cout << "\n ---- try to send " << message << " ----- \n";
 
 	if ( currentWebSocket != NULL ) {
 		if ( currentWebSocket->getReadyState() == easywsclient::WebSocket::CLOSED && lastUrl != "" ) {
-			easywsclient_createServer();
+            doLog("easywsclient_sendMessage | L3 | re-create Server");
+            easywsclient_createServer();
+            doLog("easywsclient_sendMessage | L4 | Server re-created");
 		}
 
 		currentWebSocket->poll();
@@ -132,6 +155,8 @@ int easywsclient_sendMessage(const char * fmt, ...) {
 
 		message.clear();
 
+        doLog("easywsclient_sendMessage | EXIT | 1");
+
 		//std::cout << "\n ---- SENDED " << " ----- \n";
 		return 1;
 	}
@@ -139,7 +164,8 @@ int easywsclient_sendMessage(const char * fmt, ...) {
 	message.clear();
 
 	//std::cout << "\n ---- NOT SS " << " ----- \n";
-	return 0;
+    doLog("easywsclient_sendMessage | EXIT | 0");
+    return 0;
 }
 
 int easywsclient_sendMessage4000(const char * fmt, ...) {	

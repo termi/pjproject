@@ -46,14 +46,10 @@ int easywsclient_startsWith(const char *pre, const char *str)
 void easywsclient_setUrl(const char * uri) {
 	lastUrl = std::string(uri);
 
-	std::cout << "\n lastUrl = " << lastUrl;
-
 	std::size_t found = lastUrl.find("--ipc-socket-uri=");
 	if (found != std::string::npos) {
-		lastUrl.erase(0, 17);//"--ipc-socket-uri=".length
+		lastUrl.erase(found, 17);//"--ipc-socket-uri=".length
 	}
-
-	std::cout << "\n lastUrl = " << lastUrl;
 }
 
 void easywsclient_setPrefix(const char * prefix) {
@@ -61,7 +57,7 @@ void easywsclient_setPrefix(const char * prefix) {
 
 	std::size_t found = serverPrefix.find("--ipc-prefix=");
 	if (found != std::string::npos) {
-		serverPrefix.erase(0, 13);//"--ipc-prefix=".length
+		serverPrefix.erase(found, 13);//"--ipc-prefix=".length
 	}
 }
 

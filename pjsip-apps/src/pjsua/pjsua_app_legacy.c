@@ -764,6 +764,10 @@ static void ui_make_new_call(char * menuin)// ADDED BY TERMI
 
     printf("(You currently have %d calls)\n", pjsua_call_get_count());
 
+    // ADDED BY MAXSHDR START
+    PJ_LOG(3, (THIS_FILE, "ui_make_new_call | menuin: %s", menuin));
+    // ADDED BY MAXSHDR END
+
     // ADDED BY TERMI START
     if (menuin[1]=='-') {
         char ch;
@@ -812,6 +816,9 @@ static void ui_make_new_call(char * menuin)// ADDED BY TERMI
     TEST_MULTIPART(&msg_data_);
     pjsua_call_make_call(current_acc, &tmp, &call_opt, NULL,
                          &msg_data_, &current_call);
+    // ADDED BY MAXSHDR START
+    PJ_LOG(3, (THIS_FILE, "ui_make_new_call | EXIT"));
+    // ADDED BY MAXSHDR END
 }
 
 static void ui_make_multi_call()
@@ -1796,6 +1803,10 @@ static void ui_conf_connect(char menuin[])
     int cnt;
     const char *src_title, *dst_title;
 
+    // ADDED BY MAXSHDR START
+    PJ_LOG(4, (THIS_FILE, "ui_conf_connect | menuin: %s", menuin));
+    // ADDED BY MAXSHDR END
+
     cnt = sscanf(menuin, "%s %s %s", tmp, src_port, dst_port);
 
     if (cnt != 3) {
@@ -2084,6 +2095,13 @@ void legacy_main(void)
         call_opt.vid_cnt = app_config.vid.vid_cnt;
 
         callAutoSelected = (int)auto_select_call(menuin);// ADDED BY TERMI
+
+        // ADDED BY MAXSHDR START
+        PJ_LOG(3, (THIS_FILE, "legacy_main | menuin: %s", menuin));
+        if (menuin[0] == 0) {
+            PJ_LOG(2, (THIS_FILE, "Wrong menu command!"));
+        }
+        // ADDED BY MAXSHDR END
 
         switch (menuin[0]) {
 

@@ -2398,7 +2398,7 @@ void legacy_main(void)
                         */
                     }
 
-                    easywsclient_sendMessage4000("json::{\"type\":\"divices_list\",\"list\":[%s]}", deviceStr);
+                    easywsclient_sendMessage("json::{\"type\":\"divices_list\",\"list\":[%s]}", deviceStr);
                     free(deviceStr);
                     //pj_leave_critical_section();
                 }

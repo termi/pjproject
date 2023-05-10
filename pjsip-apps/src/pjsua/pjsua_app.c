@@ -578,7 +578,7 @@ static void on_incoming_call(pjsua_acc_id acc_id, pjsua_call_id call_id,
             );*/
         // Новая версия получения входящего звонка
         // "escape::" for end-using '\n' escaping
-        easywsclient_sendMessage4000("json::escape::{\"type\":\"incoming_call_message\",\"id\":%d,\"acc_id\":%d,\"rdata\":\"<|[%s]|>\",\"message\":\"<|[%.*s]|>\",\"Call-ID\":\"%.*s\"}",
+        easywsclient_sendMessage("json::escape::{\"type\":\"incoming_call_message\",\"id\":%d,\"acc_id\":%d,\"rdata\":\"<|[%s]|>\",\"message\":\"<|[%.*s]|>\",\"Call-ID\":\"%.*s\"}",
             call_info.id, acc_id,
             pjsip_rx_data_get_info(rdata),
             (int)rdata->msg_info.len, rdata->msg_info.msg_buf,

@@ -115,18 +115,27 @@ int easywsclient_createServer() {
 }
 
 int easywsclient_sendMessage(const char * fmt, ...) {	
-	char buf[1000];     // this should really be sized appropriately
+	/*
+    char buf[1000];     // this should really be sized appropriately
                        // possibly in response to a call to vsnprintf()
+    */
+
+    std::string message(4096, 0);
+
+    int res_len = 0;
     va_list vl;
     va_start(vl, fmt);
 
-    vsnprintf_s( buf, sizeof( buf), fmt, vl);
+    res_len = vsnprintf_s(&message[0], message.size(), message.size() - 1, fmt, vl);
 
-    va_end( vl);
+    va_end(vl);
 
-	std::string message(buf);
+    if (res_len > 0)
+        message.resize(res_len);
 
     doLog("easywsclient_sendMessage | L1 | message: " + message);
+    
+    //std::string message(buf);
 
 	//std::cout << "\n ---- try to send " << message << " ----- \n";
 
@@ -149,15 +158,11 @@ int easywsclient_sendMessage(const char * fmt, ...) {
 			std::cout << "\nreceiving " << smessage;
 		});
 
-		message.clear();
-
         doLog("easywsclient_sendMessage | EXIT | 1");
 
 		//std::cout << "\n ---- SENDED " << " ----- \n";
 		return 1;
 	}
-
-	message.clear();
 
 	//std::cout << "\n ---- NOT SS " << " ----- \n";
     doLog("easywsclient_sendMessage | EXIT | 0");
@@ -165,16 +170,24 @@ int easywsclient_sendMessage(const char * fmt, ...) {
 }
 
 int easywsclient_sendMessage4000(const char * fmt, ...) {	
-	char buf[4000];     // this should really be sized appropriately
+	/*
+    char buf[4000];     // this should really be sized appropriately
                        // possibly in response to a call to vsnprintf()
+    */
+    std::string message(4096, 0);
+
+    int res_len = 0;
     va_list vl;
     va_start(vl, fmt);
 
-    vsnprintf_s( buf, sizeof( buf), fmt, vl);
+    res_len = vsnprintf_s(&message[0], message.size(), message.size() - 1, fmt, vl);
 
-    va_end( vl);
+    va_end(vl);
 
-	std::string message(buf);
+    if (res_len > 0)
+        message.resize(res_len);
+
+    //std::string message(buf);
 
 	//std::cout << "\n ---- try to send " << message << " ----- \n";
 

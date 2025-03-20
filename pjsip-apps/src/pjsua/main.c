@@ -155,7 +155,9 @@ int main_func(int argc, char *argv[])
 }
 
 // ADDED BY MAXSHDR START
+#if defined(PJ_WIN32) && PJ_WIN32!=0
 #include "crashdumper.h"
+#endif
 // ADDED BY MAXSHDR END
 
 int main(int argc, char *argv[])
@@ -163,10 +165,12 @@ int main(int argc, char *argv[])
     pj_log_set_level(1);
 
     // ADDED BY MAXSHDR START
+#if defined(PJ_WIN32) && PJ_WIN32!=0
     char tmp_buff[256];
     pj_get_temporary_dir(&tmp_buff[0], sizeof(tmp_buff));
 
     initCrashHandling(tmp_buff);
+#endif
 	// ADDED BY MAXSHDR END
 
     return pj_run_app(&main_func, argc, argv, 0);

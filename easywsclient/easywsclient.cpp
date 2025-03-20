@@ -1,10 +1,13 @@
-﻿#include "easywsclient_cpp.hpp"
+﻿#define __STDC_WANT_LIB_EXT1__ 1
+
+#include "easywsclient_cpp.hpp"
 #include "easywsclient.h"
 
 #include <stdlib.h>
 #include <stdio.h>
 #include <iostream>
 #include <stdarg.h>
+#include <cstring>
 
 
 #ifdef _WIN32
@@ -126,7 +129,11 @@ int easywsclient_sendMessage(const char * fmt, ...) {
     va_list vl;
     va_start(vl, fmt);
 
+	#ifdef _WIN32
     res_len = vsnprintf_s(&message[0], message.size(), message.size() - 1, fmt, vl);
+    #else
+    res_len = vsnprintf(&message[0], message.size(), fmt, vl);
+    #endif
 
     va_end(vl);
 
@@ -180,7 +187,11 @@ int easywsclient_sendMessage4000(const char * fmt, ...) {
     va_list vl;
     va_start(vl, fmt);
 
+	#ifdef _WIN32
     res_len = vsnprintf_s(&message[0], message.size(), message.size() - 1, fmt, vl);
+    #else
+    res_len = vsnprintf(&message[0], message.size(), fmt, vl);
+    #endif
 
     va_end(vl);
 

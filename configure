@@ -1,7 +1,11 @@
 #!/bin/sh
+
+# Set LD to g++ for proper linking
+export LD=g++
+
+# Run the main configure
 ./aconfigure "$@"
 
 # Note:
 # if you're looking for the old configure script, it has been renamed
 # to configure-legacy
-

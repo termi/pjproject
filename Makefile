@@ -10,7 +10,7 @@ ifdef MINSIZE
 MAKE_FLAGS := MINSIZE=1
 endif
 
-all clean dep depend print:
+all clean dep depend print: easywsclient
 	for dir in $(DIRS); do \
 		if $(MAKE) $(MAKE_FLAGS) -C $$dir $@; then \
 		    true; \
@@ -18,6 +18,11 @@ all clean dep depend print:
 		    exit 1; \
 		fi; \
 	done
+
+easywsclient:
+	mkdir -p easywsclient/build pjsip-apps/lib
+	cd easywsclient/build && cmake -D CMAKE_BUILD_TYPE=Release .. && make
+	cp easywsclient/build/libeasywsclient.a pjsip-apps/lib/
 
 distclean realclean:
 	for dir in $(DIRS); do \
@@ -27,20 +32,26 @@ distclean realclean:
 		    exit 1; \
 		fi; \
 	done
+
+	# Clean easywsclient build directory and library
+	if [ -d easywsclient ]; then \
+		rm -f pjsip-apps/lib/libeasywsclient.a; \
+		rm -rf easywsclient/build; \
+	fi
+
 	$(HOST_RM) config.log
 	$(HOST_RM) config.status
 
-lib:
+lib: easywsclient
 	for dir in $(LIB_DIRS); do \
 		if $(MAKE) $(MAKE_FLAGS) -C $$dir lib; then \
-		    true; \
+			true; \
 		else \
-		    exit 1; \
+			exit 1; \
 		fi; \
 	done; \
 
-
-.PHONY: lib doc clean-doc
+.PHONY: lib doc clean-doc easywsclient
 
 doc:
 	@if test \( ! "$(WWWDIR)" == "" \) -a \( ! -d $(WWWDIR)/pjlib/docs/html \) ; then \
@@ -70,7 +81,7 @@ LIBS = 	pjlib/lib/libpj-$(TARGET_NAME).a \
 	pjsip/lib/libpjsip-ua-$(TARGET_NAME).a \
 	pjsip/lib/libpjsip-simple-$(TARGET_NAME).a \
 	pjsip/lib/libpjsua-$(TARGET_NAME).a
-BINS = 	pjsip-apps/bin/pjsua-$(TARGET_NAME)$(HOST_EXE) 
+BINS = 	pjsip-apps/bin/pjsua-$(TARGET_NAME)$(HOST_EXE)
 
 size:
 	@echo -n 'Date: '

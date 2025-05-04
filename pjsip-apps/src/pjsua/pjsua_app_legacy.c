@@ -764,6 +764,10 @@ static void ui_make_new_call(char * menuin)// ADDED BY TERMI
 
     printf("(You currently have %d calls)\n", pjsua_call_get_count());
 
+    // ADDED BY MAXSHDR START
+    PJ_LOG(3, (THIS_FILE, "ui_make_new_call | menuin: %s", menuin));
+    // ADDED BY MAXSHDR END
+
     // ADDED BY TERMI START
     if (menuin[1]=='-') {
         char ch;
@@ -812,6 +816,9 @@ static void ui_make_new_call(char * menuin)// ADDED BY TERMI
     TEST_MULTIPART(&msg_data_);
     pjsua_call_make_call(current_acc, &tmp, &call_opt, NULL,
                          &msg_data_, &current_call);
+    // ADDED BY MAXSHDR START
+    PJ_LOG(3, (THIS_FILE, "ui_make_new_call | EXIT"));
+    // ADDED BY MAXSHDR END
 }
 
 static void ui_make_multi_call()
@@ -1796,6 +1803,10 @@ static void ui_conf_connect(char menuin[])
     int cnt;
     const char *src_title, *dst_title;
 
+    // ADDED BY MAXSHDR START
+    PJ_LOG(4, (THIS_FILE, "ui_conf_connect | menuin: %s", menuin));
+    // ADDED BY MAXSHDR END
+
     cnt = sscanf(menuin, "%s %s %s", tmp, src_port, dst_port);
 
     if (cnt != 3) {
@@ -2085,6 +2096,13 @@ void legacy_main(void)
 
         callAutoSelected = (int)auto_select_call(menuin);// ADDED BY TERMI
 
+        // ADDED BY MAXSHDR START
+        PJ_LOG(3, (THIS_FILE, "legacy_main | menuin: %s", menuin));
+        if (menuin[0] == 0) {
+            PJ_LOG(2, (THIS_FILE, "Wrong menu command!"));
+        }
+        // ADDED BY MAXSHDR END
+
         switch (menuin[0]) {
 
         case 'm':
@@ -2333,8 +2351,8 @@ void legacy_main(void)
         case 'D': {
             if (menuin[1] == 's') {
                 //#define MAX_DEV_COUNT64
-                pjmedia_aud_dev_info pj_info[64/*MAX_DEV_COUNT*/];
                 unsigned count = 64;//MAX_DEV_COUNT;
+                pjmedia_aud_dev_info pj_info[64/*MAX_DEV_COUNT*/];
 
                 pj_status_t the_status = pjsua_enum_aud_devs(pj_info, &count);
                 if (the_status != PJ_SUCCESS) {
@@ -2352,13 +2370,13 @@ void legacy_main(void)
                     // TODO:: https://stackoverflow.com/questions/53160797/printing-bytes-of-utf-8-string-in-c
                     char *deviceStr = (char*)malloc(
                         count * (
-                            sizeof(char) * 32/*max name size*/ +
+                            sizeof(char) * PJMEDIA_AUD_DEV_INFO_NAME_LEN/*max name size*/ +
                             sizeof(char) * 32/*max driver nam size*/ +
                             (1/*for ','*/ + 5 * sizeof(char) * 32)/*for array of string codes*/ +
-                            sizeof(char) * 72/*json fields and symbols*/
+                            sizeof(char) * 1024/*json fields and symbols*/
                         ));
                     int pos = 0;
-                    char device_name_russian_buf[(1/*for ','*/ + 5/*5-digit number*/) * 32];
+                    char device_name_russian_buf[(1/*for ','*/ + 5/*5-digit number*/) * PJMEDIA_AUD_DEV_INFO_NAME_LEN];
 
                     for (; kk < count ;++kk) {
                         pjmedia_aud_dev_info info = pj_info[kk];
@@ -2367,7 +2385,7 @@ void legacy_main(void)
                             kk == 0 ? "" : ",",
                             kk,
                             info.name,
-                            device_name_russian_workaround(device_name_russian_buf, info.name, 32),
+                            device_name_russian_workaround(device_name_russian_buf, info.name, PJMEDIA_AUD_DEV_INFO_NAME_LEN),
                             info.driver,
                             info.input_count,
                             info.output_count);
@@ -2380,7 +2398,7 @@ void legacy_main(void)
                         */
                     }
 
-                    easywsclient_sendMessage4000("json::{\"type\":\"divices_list\",\"list\":[%s]}", deviceStr);
+                    easywsclient_sendMessage("json::{\"type\":\"divices_list\",\"list\":[%s]}", deviceStr);
                     free(deviceStr);
                     //pj_leave_critical_section();
                 }

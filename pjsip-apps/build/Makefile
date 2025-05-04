@@ -12,6 +12,7 @@ RULES_MAK := $(PJDIR)/build/rules.mak
 #
 export _CFLAGS 	:= $(CC_CFLAGS) $(OS_CFLAGS) $(HOST_CFLAGS) $(M_CFLAGS) \
 		   $(PJ_CFLAGS) $(CFLAGS) $(CC_INC)../../pjsip/include \
+		   $(CC_INC)../../easywsclient \
 		   $(CC_INC)../../pjlib/include \
 		   $(CC_INC)../../pjlib-util/include \
 		   $(CC_INC)../../pjnath/include \
@@ -19,7 +20,7 @@ export _CFLAGS 	:= $(CC_CFLAGS) $(OS_CFLAGS) $(HOST_CFLAGS) $(M_CFLAGS) \
 export _CXXFLAGS:= $(_CFLAGS) $(CC_CXXFLAGS) $(OS_CXXFLAGS) $(M_CXXFLAGS) \
 		   $(HOST_CXXFLAGS) $(CXXFLAGS)
 export _LDFLAGS := $(CC_LDFLAGS) $(OS_LDFLAGS) $(M_LDFLAGS) $(HOST_LDFLAGS) \
-		   $(APP_LDFLAGS) $(APP_LDLIBS) $(LDFLAGS) 
+		   $(APP_LDFLAGS) $(APP_LDLIBS) $(LDFLAGS)
 
 ###############################################################################
 # Defines for building PJSUA
@@ -28,9 +29,9 @@ export PJSUA_SRCDIR = ../src/pjsua
 export PJSUA_OBJS += $(OS_OBJS) $(M_OBJS) $(CC_OBJS) $(HOST_OBJS) \
             main.o pjsua_app.o pjsua_app_cli.o pjsua_app_common.o \
             pjsua_app_config.o pjsua_app_legacy.o
-export PJSUA_CFLAGS += $(PJ_CFLAGS) $(CFLAGS)
-export PJSUA_CXXFLAGS += $(PJ_CXXFLAGS) $(CFLAGS)
-export PJSUA_LDFLAGS += $(PJ_LDFLAGS) $(PJ_LDLIBS) $(LDFLAGS)
+export PJSUA_CFLAGS += $(PJ_CFLAGS) $(CFLAGS) $(CC_INC)../../easywsclient -std=c++17
+export PJSUA_CXXFLAGS += $(PJ_CXXFLAGS) $(CFLAGS) $(CC_INC)../../easywsclient -std=c++17
+export PJSUA_LDFLAGS += $(PJ_LDFLAGS) $(PJ_LDLIBS) $(LDFLAGS) -L$(LIBDIR) -lstdc++ -leasywsclient
 ifeq ($(EXCLUDE_APP),0)
 export PJSUA_EXE:=pjsua-$(TARGET_NAME)$(HOST_EXE)
 endif
